@@ -1,4 +1,4 @@
-class JournalEntry < ActiveRecord::Base
+class JournalEntry < ApplicationRecord
   include Pageable
 
   belongs_to :journalable, polymorphic: true
@@ -15,6 +15,12 @@ class JournalEntry < ActiveRecord::Base
   validates :column, presence: true, if: Proc.new { |e| e.action == "update" }
   validates :ip, presence: true, unless: Proc.new { |e| e.source == "www1" }
   validates :source, inclusion: { in: Global::SOURCES }
+
+  # Extracts only the user's full name from 'by' [first last (email / id)] column
+  # "John Smith (admin@icu.ie/63)" => "John Smith"
+  def by_name
+    by.sub(/\s*\(.+\)\z/, "")
+  end
 
   def journalable_type_id
     "#{journalable_type} #{journalable_id}"

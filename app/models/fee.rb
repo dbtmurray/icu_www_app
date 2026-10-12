@@ -1,4 +1,4 @@
-class Fee < ActiveRecord::Base
+class Fee < ApplicationRecord
   include Journalable
   include Normalizable
   include Pageable
@@ -10,7 +10,7 @@ class Fee < ActiveRecord::Base
 
   has_many :items, dependent: :nullify
   has_many :user_inputs, dependent: :destroy
-
+  belongs_to :event # Only used by Fee::Entry
   before_validation :normalize_attributes
 
   validates :type, inclusion: { in: TYPES }
@@ -18,7 +18,7 @@ class Fee < ActiveRecord::Base
   validates :amount, numericality: { greater_than_or_equal_to: Cart::MIN_AMOUNT, less_than: Cart::MAX_AMOUNT }, unless: Proc.new { |f| f.amount.blank? }
   validates :amount, presence: true, unless: Proc.new { |f| f.user_amount? }
   validates :days, numericality: { only_integer: true, greater_than: 0 }, allow_nil: true
-  validates :url, url: true, allow_nil: true
+  validates :url, url: true, if: -> { self[:url].present? }
   validate :valid_days, :valid_dates, :valid_discount, :valid_age_limits, :valid_rating_limits
 
   scope :alphabetic, -> { order(name: :asc) }
@@ -29,9 +29,11 @@ class Fee < ActiveRecord::Base
 
   def self.search(params, path)
     today = Date.today.to_s
-    matches = all
+    matches = all.includes(:event)
     matches = matches.where(type: params[:type]) if params[:type].present?
     matches = matches.where(active: params[:active] == "true" ? true : false) if params[:active].present?
+    matches = matches.where(event_id: params[:event_id]) if params[:event_id].present? && params[:event_id].to_i > 0
+    matches = matches.where("name LIKE ?", "%#{params[:name]}%") if params[:name].present?
     case params[:sale]
     when "past"    then matches = matches.old_to_new.where("sale_end < ?", today)
     when "future"  then matches = matches.new_to_old.where("sale_start > ?", today)
@@ -81,6 +83,17 @@ class Fee < ActiveRecord::Base
     return false if sale_start.present? && sale_start > Date.today
     return false if sale_end.present?   && sale_end   < Date.today
     true
+  end
+
+  # Checks if the discounted amount should be used
+  def discounted?
+    discounted_amount && discount_deadline && Date.today <= discount_deadline
+  end
+
+  # Retrieves the right amount for the fee depending
+  # on if it should be discounted or not
+  def current_amount
+    discounted? ? discounted_amount : amount
   end
 
   def advance_1_year
@@ -150,20 +163,30 @@ class Fee < ActiveRecord::Base
   def valid_age_limits
     if min_age || max_age
       unless age_ref_date.present?
-        %i[min_age max_age].each { |m| errors[m] << "Age reference date required" if self.send(m) }
+        # %i[min_age max_age].each { |m| errors[m] << "Age reference date required" if self.send(m) }
+        %i[min_age max_age].each { |m| errors.add(m, "Age reference date required") if self.send(m) }
       end
     end
     if min_age && max_age && min_age > max_age
-      errors[:base] << "Age minimum is greater than maximum"
+    #   errors[:base] << "Age minimum is greater than maximum"
+      errors.add(:base, "Age minimum is greater than maximum")
     end
   end
 
   def valid_rating_limits
     return unless min_rating && max_rating
     if min_rating > max_rating
-      errors[:base] << "Rating minimum is greater than maximum"
+    #   errors[:base] << "Rating minimum is greater than maximum"
+      errors.add(:base, "Rating minimum is greater than maximum")
     elsif min_rating + 100 > max_rating
-      errors[:base] << "Rating limits are too close"
+        #   errors[:base] << "Rating limits are too close"
+      errors.add(:base, "Rating limits are too close")
     end
   end
 end
+
+# Subclasses need to be loaded to ensure the self.all method works correctly. Possibly only an issue in development mode.
+# The requires are placed here to avoid circular dependencies.
+require_dependency 'fee/entry'
+require_dependency 'fee/other'
+require_dependency 'fee/subscription'

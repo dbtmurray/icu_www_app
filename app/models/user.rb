@@ -1,4 +1,4 @@
-class User < ActiveRecord::Base
+class User < ApplicationRecord
   include Journalable
   include Pageable
 
@@ -11,7 +11,7 @@ class User < ActiveRecord::Base
   ASSHOLE_PLAYER_IDS = [11, 295, 1354, 1733, 5198, 5601, 6141]
 
   # The tester role is used to show new functionality
-  ROLES = %w[admin tester calendar documenter editor gameskeeper inspector membership organiser reporter translator treasurer]
+  ROLES = %w[admin auditor tester calendar documenter editor gameskeeper inspector membership organiser reporter translator treasurer]
   MINIMUM_PASSWORD_LENGTH = 6
   THEMES = %w[Cerulean Cosmo Cyborg Darkly Flatly Journal Lumen Superhero Paper Readable Sandstone Simplex Slate Spacelab United Yeti]
   DEFAULT_THEME = "Flatly"
@@ -24,11 +24,14 @@ class User < ActiveRecord::Base
   has_many :logins, dependent: :destroy
   has_many :refunds, dependent: :nullify
   has_many :pgns, dependent: :nullify
+  has_many :event_users, dependent: :destroy
+  has_many :organised_events, through: :event_users, source: :event
   belongs_to :player
 
   default_scope { order(:email) }
   scope :include_player, -> { includes(:player) }
   scope :vips, -> { where("roles is not null") }
+  scope :organisers, -> { where("roles LIKE ?", "%organiser%") }
   scope :by_name, -> { include_player.order("players.last_name asc, players.first_name asc")}
 
   before_validation :canonicalize_roles, :dont_remove_the_last_admin, :update_password_if_present, :asshole_check
@@ -86,7 +89,7 @@ class User < ActiveRecord::Base
 
   # Updates the last_used_at attribute with the current time.
   def used_site_now
-    self.update_attributes(last_used_at: Time.now)
+    self.update(last_used_at: Time.now)
   end
 
   # Cater for a theme getting removed, as Ameila was in Aug 2014 after Bootswatch announced they were dropping it.
@@ -103,7 +106,7 @@ class User < ActiveRecord::Base
   def human_roles(options={})
     return "" if roles.blank?
     roles.split(" ").map do |role|
-      ROLES.include?(role) ? I18n.t("user.role.#{role}", options) : role
+      ROLES.include?(role) ? I18n.t("user.role.#{role}", **options) : role
     end.join(" ")
   end
 
@@ -157,7 +160,7 @@ class User < ActiveRecord::Base
   end
 
   def self.encrypt_password(password, salt)
-    eval(Rails.application.secrets.crypt["password"])
+    eval(Rails.application.secrets.crypt[:password])
   end
 
   def self.random_salt
@@ -194,7 +197,7 @@ class User < ActiveRecord::Base
   def reason_to_not_delete
     case
     when roles.present?   then "has special roles"
-    when logins.count > 0 then "has recorded logins"
+    # when logins.count > 0 then "has recorded logins"
     else false
     end
   end
@@ -234,7 +237,7 @@ class User < ActiveRecord::Base
   end
 
   def verification_param
-    eval(Rails.application.secrets.crypt["verifier"])
+    eval(Rails.application.secrets.crypt[:verifier])
   end
 
   def change_password(old, new_1, new_2)
@@ -296,21 +299,6 @@ class User < ActiveRecord::Base
 
   def send_reset_password_instructions_notification(token)
     IcuMailer.forgot_password(id, token).deliver_now
-  end
-
-  # Looks up a user with the given email. If no user is found, it looks for a player with the given email,
-  # who has a current subscription, and then creates a new user for that player.
-  # @return [User] if there is a player with the given email that is subscribed for the current season
-  def self.for_subscribed_player(email)
-    user = where(email: email).first
-    return user if user
-    season = Season.new
-    player = Player.subscribed_in(season).where(email: email).first
-    if player
-      User.create(email: email, player_id: player.id, expires_on: season.end, status: 'OK', password: "Reset#{rand(1_000_000_000)}")
-    else
-      nil
-    end
   end
 
   private

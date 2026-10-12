@@ -1,4 +1,4 @@
-class Player < ActiveRecord::Base
+class Player < ApplicationRecord
   extend Util::Params
   extend ICU::Util::AlternativeNames
   include Journalable
@@ -86,7 +86,21 @@ class Player < ActiveRecord::Base
   # @return [Item::Subscription]
   # This code handles the problem of lifetime members properly.
   def most_recent_subscription
-    Item::Subscription.where(player_id: id).order("coalesce(start_date, CURRENT_DATE) DESC").limit(1).first
+    Item::Subscription.where(player_id: id).order(Arel.sql("coalesce(start_date, CURRENT_DATE) DESC")).limit(1).first
+  end
+
+  # Checks if a player is subscribed for the current season
+  # @param include_grace_period Boolean that decides whether to include Sep-Dec of the next season
+  # @return Boolean
+  def is_subscribed?(include_grace_period)
+    return false if most_recent_subscription.nil?
+
+    cutoff_date = most_recent_subscription.end_date # Aug 31 marks the end of the season  
+      
+    return true if cutoff_date.nil? # Lifetime membership
+
+    cutoff_date = Date.new(cutoff_date.year, 12, 31) if include_grace_period # Change to Dec 31 if including grace period 
+    Date.today <= cutoff_date
   end
 
   def age(ref=Date.today)

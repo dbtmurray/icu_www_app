@@ -1,4 +1,4 @@
-class Download < ActiveRecord::Base
+class Download < ApplicationRecord
   include Accessible
   include Journalable
   include Pageable
@@ -8,13 +8,14 @@ class Download < ActiveRecord::Base
   attr_accessor :dir_to_remove
 
   MIN_SIZE = 500
-  MAX_SIZE = 5.megabytes
+  MAX_SIZE = 100.megabytes
   TYPES = {
     csv:  "text/csv",
     doc:  "application/msword",
     docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     pdf:  "application/pdf",
     pgn:  ["application/x-chess-pgn", "application/octet-stream"],
+    rtf:  ["application/rtf", "text/rtf"],
     txt:  "text/plain",
     wav:  "audio/x-wav",
     xls:  ["application/vnd.ms-excel", "application/vnd.ms-office"],
@@ -29,7 +30,7 @@ class Download < ActiveRecord::Base
   before_destroy :remember_directory
 
   # Note: need to add the callbacks Paperclip registers in the right order.
-  has_attached_file :data, url: "/system/:class/:id_partition/:hash.:extension", hash_secret: Rails.application.secrets.paperclip
+  has_attached_file :data, url: "/:system_dir/:class/:id_partition/:hash.:extension", hash_secret: Rails.application.secrets.paperclip
 
   after_save :manage_unobfuscated_version
   after_destroy :clean_up_directory

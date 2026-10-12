@@ -4,11 +4,14 @@ describe "Pay", js: true do
   include_context "features"
 
   let(:add_to_cart)           { I18n.t("item.add") }
-  let(:bad_cvc)               { I18n.t("shop.payment.error.cvc") }
+  # let(:bad_cvc)               { I18n.t("shop.payment.error.cvc") }
+  let(:bad_cvc)               { "Your security code is incomplete." }
   let(:bad_email)             { I18n.t("shop.payment.error.email") }
-  let(:bad_expiry)            { I18n.t("shop.payment.error.expiry") }
+  # let(:bad_expiry)            { I18n.t("shop.payment.error.expiry") }
+  let(:bad_expiry)            { "Your expiry date is incomplete" }
   let(:bad_name)              { I18n.t("shop.payment.error.name") }
-  let(:bad_number)            { I18n.t("shop.payment.error.number") }
+  # let(:bad_number)            { I18n.t("shop.payment.error.number") }
+  let(:bad_number)            { "Your card number is incomplete" }
   let(:checkout)              { I18n.t("shop.cart.checkout") }
   let(:cheque)                { I18n.t("shop.payment.method.cheque") }
   let(:completed)             { I18n.t("shop.payment.completed") }
@@ -34,21 +37,22 @@ describe "Pay", js: true do
   let(:shop)                  { I18n.t("shop.shop") }
   let(:total)                 { I18n.t("shop.cart.total") }
 
-  let(:cvc_id)    { "cvc" }
+  let(:cvc_id)    { "payment-cvcInput" }
   let(:email_id)  { "confirmation_email" }
-  let(:expiry_id) { "expiry" }
-  let(:name_id)   { "payment_name" }
-  let(:number_id) { "number" }
+  let(:expiry_id) { "payment-expiryInput" }
+  let(:name_id)   { "name" }
+  let(:number_id) { "payment-numberInput" }
 
   let(:cvc)     { "123" }
-  let(:expiry)  { "01 / #{(Date.today.year + 2).to_s}" }
-  let(:number)  { "4242 4242 4242 4242" }
+  let(:expiry)  { "01 / #{((Date.today.year + 2).to_s)[2..4]}" }
+  let(:number)  { "4000 0027 6000 3184" } # always requires 3D Secure
+  let(:no_3ds_number) { "4242 4242 4242 4242" }
   let(:stripe)  { "stripe" }
   let(:account) { Cart.current_payment_account }
 
-  let(:card_declined) { "Your card was declined." }
-  let(:expired_card)  { "Your card has expired." }
-  let(:incorrect_cvc) { "Your card's security code is incorrect." }
+  let(:card_declined) { "Your card has been declined." }
+  let(:expired_card)  { "Your card has expired. Try a different card." }
+  let(:incorrect_cvc) { "Your card’s CVC is incorrect." }
 
   let(:item)    { "li" }
   let(:title)   { "h3" }
@@ -60,25 +64,55 @@ describe "Pay", js: true do
   def add_something_to_cart
     visit shop_path
     click_link subscription_fee.description
-    click_button select_member
-    fill_in last_name, with: player.last_name + force_submit
-    fill_in first_name, with: player.first_name + force_submit
-    click_link player.id
+    pick_cart_member(player)
     click_button add_to_cart
   end
 
   def fill_in_all_and_click_pay(opt = {})
     opt.reverse_merge!(number: number, expiry: expiry, cvc: cvc, name: player.name, email: player.email)
-    fill_in number_id, with: opt[:number] if opt[:number]
-    fill_in expiry_id, with: opt[:expiry] if opt[:expiry]
-    fill_in cvc_id, with: opt[:cvc]       if opt[:cvc]
+    within_frame do
+      fill_in number_id, with: opt[:number] if opt[:number]
+      fill_in expiry_id, with: opt[:expiry] if opt[:expiry]
+      fill_in cvc_id, with: opt[:cvc]       if opt[:cvc]
+    end
     fill_in name_id, with: opt[:name]     if opt[:name]
     fill_in email_id, with: opt[:email]   if opt[:email]
     click_button pay
+    if opt[:number] == number
+      # 3D secure - bypass capybara-lockstep, which deadlocks here because
+      # stripe.confirmPayment() holds a pending fetch open until 3DS completes.
+      # Raw Selenium navigates the 3-level nested iframe without going through lockstep.
+      # This card always requires 3DS, so any failure here is real: report which step failed.
+      browser = page.driver.browser
+      wait = Selenium::WebDriver::Wait.new(timeout: 15)
+      started = Time.now
+      step = "3DS challenge iframe"
+      begin
+        wait.until { browser.find_elements(:css, "iframe[src*='three-ds-2-challenge']").any? }
+        browser.switch_to.frame(browser.find_element(:css, "iframe[src*='three-ds-2-challenge']"))
+        step = "#challengeFrame inside the 3DS iframe"
+        wait.until { browser.find_elements(:css, '#challengeFrame').any? }
+        browser.switch_to.frame(browser.find_element(:css, '#challengeFrame'))
+        step = "#test-source-authorize-3ds button"
+        wait.until { browser.find_elements(:css, '#test-source-authorize-3ds').any? }
+        browser.find_element(:css, '#test-source-authorize-3ds').click
+      rescue Selenium::WebDriver::Error::WebDriverError => e
+        raise "3DS step failed at #{step} after #{(Time.now - started).round(1)}s: #{e.class}: #{e.message.lines.first&.strip}"
+      ensure
+        browser.switch_to.default_content rescue nil
+      end
+    end
+  end
+
+  # Wait for Stripe's card form to load in its iframe, rather than sleeping.
+  def wait_for_card_form
+    within_frame { expect(page).to have_field(number_id, wait: 10) }
   end
 
   def fill_in_number_and_click_pay(number)
-    fill_in number_id, with: number
+    within_frame do
+      fill_in number_id, with: number
+    end
     click_button pay
   end
 
@@ -90,157 +124,182 @@ describe "Pay", js: true do
     ActionMailer::Base.deliveries.clear
   end
 
-  context "with card" do
+  context "with card", stripe: true do
     before(:each) do
       add_something_to_cart
       click_link checkout
+      wait_for_card_form
     end
 
     it "successful" do
-      # cart = Cart.last
-      # expect(cart).to be_unpaid
-      # expect(cart.payment_completed).to be_nil
-      # expect(cart.payment_ref).to be_nil
-      # expect(cart.payment_method).to be_nil
-      # expect(cart.payment_account).to be_nil
-      # expect(cart.user).to be_nil
-      # expect(cart.items.count).to eq 1
-      #
-      # subscription = cart.items.first
-      # expect(subscription).to be_unpaid
-      # expect(subscription.payment_method).to be_nil
-      # expect(subscription.source).to eq "www2"
-      #
-      # fill_in_all_and_click_pay
-      #
-      # expect(page).to have_css(title, text: completed)
-      # expect(page).to have_css(item, text: /\A#{total}: €#{"%.2f" % subscription.cost}\z/)
-      # expect(page).to have_css(item, text: /\A#{payment_time}: 20\d\d-\d\d-\d\d \d\d:\d\d GMT\z/)
-      # expect(page).to have_css(item, text: /\A#{confirmation_email_to}: #{player.email}\z/)
-      #
-      # cart.reload
-      # expect(cart).to be_paid
-      # expect(cart.user).to be_nil
-      # expect(cart.payment_completed).to be_present
-      # expect(cart.payment_ref).to be_present
-      # expect(cart.payment_method).to eq stripe
-      # expect(cart.payment_account).to eq account
-      # expect(cart.payment_errors.count).to eq 0
-      # expect(cart.confirmation_sent).to be true
-      # expect(cart.confirmation_error).to be_nil
-      # expect(cart.confirmation_text).to be_present
-      #
-      # subscription.reload
-      # expect(subscription).to be_paid
-      # expect(subscription.payment_method).to eq stripe
-      #
-      # expect(ActionMailer::Base.deliveries.size).to eq 1
-      # email = ActionMailer::Base.deliveries.last
-      # expect(email.from.size).to eq 1
-      # expect(email.from.first).to eq IcuMailer::FROM
-      # expect(email.to.size).to eq 1
-      # expect(email.to.first).to eq player.email
-      # expect(email.subject).to eq IcuMailer::CONFIRMATION
-      #
-      # text = email.body.decoded
-      # expect(text).to include(player.name(id: true))
-      # expect(text).to include("%.2f" % subscription.cost)
-      # expect(text).to include("#{season_ticket}: #{SeasonTicket.new(player.id, subscription.end_date.at_end_of_year).to_s}")
-      # expect(text).to eq cart.confirmation_text
+      cart = Cart.last
+      expect(cart).to be_unpaid
+      expect(cart.payment_completed).to be_nil
+      expect(cart.payment_ref).to be_nil
+      expect(cart.payment_method).to be_nil
+      expect(cart.payment_account).to be_nil
+      expect(cart.user).to be_nil
+      expect(cart.items.count).to eq 1
+
+      subscription = cart.items.first
+      expect(subscription).to be_unpaid
+      expect(subscription.payment_method).to be_nil
+      expect(subscription.source).to eq "www2"
+
+      fill_in_all_and_click_pay
+
+      expect(page).to have_css(title, text: completed, wait: 20)
+      expect(page).to have_css(item, text: /\A#{total}: €#{"%.2f" % subscription.cost}\z/)
+      expect(page).to have_css(item, text: /\A#{payment_time}: 20\d\d-\d\d-\d\d \d\d:\d\d GMT\z/)
+      expect(page).to have_css(item, text: /\A#{confirmation_email_to}: #{player.email}\z/)
+
+      cart.reload
+      expect(cart).to be_paid
+      expect(cart.user).to be_nil
+      expect(cart.payment_completed).to be_present
+      expect(cart.payment_ref).to be_present
+      expect(cart.payment_method).to eq stripe
+      expect(cart.payment_account).to eq account
+      expect(cart.payment_errors.count).to eq 0
+      expect(cart.confirmation_sent).to be true
+      expect(cart.confirmation_error).to be_nil
+      expect(cart.confirmation_text).to be_present
+
+      subscription.reload
+      expect(subscription).to be_paid
+      expect(subscription.payment_method).to eq stripe
+
+      expect(ActionMailer::Base.deliveries.size).to eq 1
+      email = ActionMailer::Base.deliveries.last
+      expect(email.from.size).to eq 1
+      expect(email.from.first).to eq IcuMailer::FROM
+      expect(email.to.size).to eq 1
+      expect(email.to.first).to eq player.email
+      expect(email.subject).to eq IcuMailer::CONFIRMATION
+
+      text = email.body.decoded
+      expect(text).to include(player.name(id: true))
+      expect(text).to include("%.2f" % subscription.cost)
+      expect(text).to include("#{season_ticket}: #{SeasonTicket.new(player.id, subscription.end_date.at_end_of_year).to_s}")
+      expect(text).to eq cart.confirmation_text
     end
 
     it "stripe errors" do
-      # fill_in_all_and_click_pay(number: "4000000000000002")
-      # expect(page).to have_css(failure, text: gateway_error(card_declined))
-      # subscription = Item::Subscription.last
-      # expect(subscription).to be_unpaid
-      # cart = Cart.include_errors.last
-      # expect(cart).to be_unpaid
-      # expect(cart.user).to be_nil
-      # expect(cart.payment_errors.count).to eq 1
-      # payment_error = cart.payment_errors.last
-      # expect(payment_error.message).to eq card_declined
-      # expect(payment_error.details).to be_present
-      # expect(payment_error.payment_name).to eq player.name
-      # expect(payment_error.confirmation_email).to eq player.email
-      # expect(ActionMailer::Base.deliveries).to be_empty
-      #
-      # fill_in_number_and_click_pay(number: "4000000000000069")
-      # expect(page).to have_css(failure, text: gateway_error(expired_card))
-      # subscription.reload
-      # expect(subscription).to be_unpaid
-      # cart.reload
-      # expect(cart).to be_unpaid
-      # expect(cart.user).to be_nil
-      # expect(cart.payment_errors.count).to eq 2
-      # payment_error = cart.payment_errors.last
-      # expect(payment_error.message).to eq expired_card
-      # expect(payment_error.details).to be_present
-      # expect(payment_error.payment_name).to eq player.name
-      # expect(payment_error.confirmation_email).to eq player.email
-      # expect(ActionMailer::Base.deliveries).to be_empty
-      #
-      # login(user)
-      # click_link shop
-      # click_link current
-      # click_link checkout
-      #
-      # fill_in_all_and_click_pay(number: "4000000000000127")
-      # expect(page).to have_css(failure, text: gateway_error(incorrect_cvc))
-      # subscription.reload
-      # expect(subscription).to be_unpaid
-      # cart.reload
-      # expect(cart).to be_unpaid
+      fill_in_all_and_click_pay(number: "4000000000000002")
+      expect(page).to have_css(failure, text: card_declined, wait: 10)
+      wait_for_browser # the PaymentError is recorded by a request after the message appears
+      subscription = Item::Subscription.last
+      expect(subscription).to be_unpaid
+      cart = Cart.include_errors.last
+      expect(cart).to be_unpaid
+      expect(cart.user).to be_nil
+      expect(cart.payment_errors.count).to eq 1
+      payment_error = cart.payment_errors.last
+      expect(payment_error.message).to eq card_declined
+      expect(payment_error.details).to be_present
+      expect(payment_error.payment_name).to eq player.name
+      expect(payment_error.confirmation_email).to eq player.email
+      expect(ActionMailer::Base.deliveries).to be_empty
+
+      fill_in_number_and_click_pay(number: "4000000000000069")
+      expect(page).to have_css(failure, text: expired_card, wait: 10)
+      wait_for_browser # the PaymentError is recorded by a request after the message appears
+      subscription.reload
+      expect(subscription).to be_unpaid
+      cart.reload
+      expect(cart).to be_unpaid
+      expect(cart.user).to be_nil
+      expect(cart.payment_errors.count).to eq 2
+      payment_error = cart.payment_errors.last
+      expect(payment_error.message).to eq expired_card
+      expect(payment_error.details).to be_present
+      expect(payment_error.payment_name).to eq player.name
+      expect(payment_error.confirmation_email).to eq player.email
+      expect(ActionMailer::Base.deliveries).to be_empty
+
+      login(user)
+      click_link shop
+      click_link current
+      click_link checkout
+
+      fill_in_all_and_click_pay(number: "4000000000000127")
+      expect(page).to have_css(failure, text: incorrect_cvc, wait: 10)
+      wait_for_browser # the PaymentError is recorded by a request after the message appears
+      subscription.reload
+      expect(subscription).to be_unpaid
+      cart.reload
+      expect(cart).to be_unpaid
       # expect(cart.user).to eq user
-      # expect(cart.payment_errors.count).to eq 3
-      # payment_error = cart.payment_errors.last
-      # expect(payment_error.message).to eq incorrect_cvc
-      # expect(payment_error.details).to be_present
-      # expect(payment_error.payment_name).to eq player.name
-      # expect(payment_error.confirmation_email).to eq player.email
-      # expect(ActionMailer::Base.deliveries).to be_empty
+      expect(cart.user).to be_nil
+      expect(cart.payment_errors.count).to eq 3
+      payment_error = cart.payment_errors.last
+      expect(payment_error.message).to eq incorrect_cvc
+      expect(payment_error.details).to be_present
+      expect(payment_error.payment_name).to eq player.name
+      expect(payment_error.confirmation_email).to eq player.email
+      expect(ActionMailer::Base.deliveries).to be_empty
     end
 
     it "client side errors" do
       expect(PaymentError.count).to eq 0
+      wait_for_card_form
+      iframe = find('iframe')
 
-      # Card.
-      click_button pay
-      expect(page).to have_css(failure, text: bad_number)
-      fill_in number_id, with: "1234"
-      click_button pay
-      expect(page).to have_css(failure, text: bad_number)
-
-      # Expiry.
-      fill_in number_id, with: number
-      click_button pay
-      expect(page).to have_css(failure, text: bad_expiry)
-      fill_in expiry_id, with: "99"
-      click_button pay
-      expect(page).to have_css(failure, text: bad_expiry)
-
-      # CVC.
-      fill_in expiry_id, with: expiry
-      click_button pay
-      expect(page).to have_css(failure, text: bad_cvc)
-      fill_in cvc_id, with: "1"
-      click_button pay
-      expect(page).to have_css(failure, text: bad_cvc)
-
-      # Name.
-      fill_in cvc_id, with: cvc
-      click_button pay
-      expect(page).to have_css(failure, text: bad_name)
+      fill_in name_id, with: player.name
 
       # Email.
-      fill_in name_id, with: player.name
       click_button pay
       expect(page).to have_css(failure, text: bad_email)
       fill_in email_id, with: "rubbish"
       click_button pay
       expect(page).to have_css(failure, text: bad_email)
+      fill_in email_id, with: Faker::Internet.email
 
-      expect(PaymentError.count).to eq 0
+      # Card.
+      click_button pay
+      expect(page).to have_css(failure, text: bad_number)
+
+      within_frame(iframe) do
+        fill_in number_id, with: "1234"
+      end
+      click_button pay
+      expect(page).to have_css(failure, text: bad_number)
+
+      # Expiry.
+      within_frame(iframe) do
+        fill_in number_id, with: number
+      end
+      click_button pay
+      expect(page).to have_css(failure, text: bad_expiry)
+      within_frame(iframe) do
+        fill_in expiry_id, with: "99"
+      end
+      click_button pay
+      expect(page).to have_css(failure, text: bad_expiry)
+
+      # CVC.
+      within_frame(iframe) do
+        fill_in expiry_id, with: expiry
+      end
+      click_button pay
+      expect(page).to have_css(failure, text: bad_cvc)
+      within_frame(iframe) do
+        fill_in cvc_id, with: "1"
+      end
+      click_button pay
+      expect(page).to have_css(failure, text: bad_cvc)
+
+      # Name.
+      within_frame(iframe) do
+        fill_in cvc_id, with: cvc
+      end
+      find("#%s" % [name_id]).native.clear
+      click_button pay
+      expect(page).to have_css(failure, text: bad_name)
+
+      wait_for_browser # the last PaymentError is recorded by a request after the message appears
+
+      expect(PaymentError.count).to eq 6
       expect(ActionMailer::Base.deliveries).to be_empty
     end
   end
@@ -326,7 +385,7 @@ describe "Pay", js: true do
     end
   end
 
-  context "new member" do
+  context "new member", stripe: true do
     let(:newbie)     { create(:new_player) }
     let(:newbie_fed) { ICU::Federation.find(newbie.fed).name }
     let(:newbie_sex) { I18n.t("player.gender.#{newbie.gender}") }
@@ -342,40 +401,41 @@ describe "Pay", js: true do
       select newbie_fed, from: fed
       fill_in email, with: newbie.email
       click_button save
+      wait_for_browser
       expect(page).to_not have_css(failure)
       click_button add_to_cart
       click_link checkout
     end
 
     it "successful" do
-      # subscription = Item::Subscription.last
-      # expect(subscription.player_id).to be_nil
-      # expect(subscription.player_data).to be_present
-      #
-      # fill_in_all_and_click_pay
-      #
-      # expect(page).to have_css(title, text: completed)
-      # subscription.reload
-      # expect(subscription).to be_paid
-      #
-      # new_player = subscription.player
-      # expect(new_player).to be_present
-      # expect(new_player.first_name).to eq newbie.first_name
-      # expect(new_player.last_name).to eq newbie.last_name
-      # expect(new_player.dob).to eq newbie.dob
-      # expect(new_player.fed).to eq newbie.fed
-      # expect(new_player.gender).to eq newbie.gender
-      # expect(new_player.email).to eq newbie.email
-      # expect(new_player.status).to eq "active"
-      # expect(new_player.source).to eq "subscription"
-      #
-      # expect(ActionMailer::Base.deliveries.size).to eq 1
-      # email = ActionMailer::Base.deliveries.last
-      #
-      # text = email.body.decoded
-      # expect(text).to include(new_player.name(id: true))
-      # expect(text).to include("%.2f" % subscription.cost)
-      # expect(text).to include("#{season_ticket}: #{SeasonTicket.new(new_player.id, subscription.end_date.at_end_of_year).to_s}")
+      subscription = Item::Subscription.last
+      expect(subscription.player_id).to be_nil
+      expect(subscription.player_data).to be_present
+
+      fill_in_all_and_click_pay(number: no_3ds_number) # 3D Secure is covered by "with card successful"
+
+      expect(page).to have_css(title, text: completed, wait: 20)
+      subscription.reload
+      expect(subscription).to be_paid
+
+      new_player = subscription.player
+      expect(new_player).to be_present
+      expect(new_player.first_name).to eq newbie.first_name
+      expect(new_player.last_name).to eq newbie.last_name
+      expect(new_player.dob).to eq newbie.dob
+      expect(new_player.fed).to eq newbie.fed
+      expect(new_player.gender).to eq newbie.gender
+      expect(new_player.email).to eq newbie.email
+      expect(new_player.status).to eq "active"
+      expect(new_player.source).to eq "subscription"
+
+      expect(ActionMailer::Base.deliveries.size).to eq 1
+      email = ActionMailer::Base.deliveries.last
+
+      text = email.body.decoded
+      expect(text).to include(new_player.name(id: true))
+      expect(text).to include("%.2f" % subscription.cost)
+      expect(text).to include("#{season_ticket}: #{SeasonTicket.new(new_player.id, subscription.end_date.at_end_of_year).to_s}")
     end
   end
 
@@ -386,26 +446,23 @@ describe "Pay", js: true do
       login("membership")
       visit shop_path
       click_link subscription_fee.description
-      click_button select_member
-      fill_in last_name, with: player.last_name + force_submit
-      fill_in first_name, with: player.first_name + force_submit
-      click_link player.id
+      pick_cart_member(player)
       click_button add_to_cart
     end
 
-    it "card" do
-      # click_link checkout
-      # fill_in_all_and_click_pay
-      #
-      # expect(page).to have_css(title, text: completed)
-      #
-      # expect(Item::Subscription.count).to eq 1
-      # subscription = Item::Subscription.first
-      # expect(subscription).to be_paid
-      # expect(subscription.player_id).to eq player.id
-      #
-      # old_user.reload
-      # expect(old_user.expires_on).to eq Season.new.end_of_grace_period
+    it "card", stripe: true do
+      click_link checkout
+      fill_in_all_and_click_pay(number: no_3ds_number) # 3D Secure is covered by "with card successful"
+
+      expect(page).to have_css(title, text: completed, wait: 20)
+
+      expect(Item::Subscription.count).to eq 1
+      subscription = Item::Subscription.first
+      expect(subscription).to be_paid
+      expect(subscription.player_id).to eq player.id
+
+      old_user.reload
+      expect(old_user.expires_on).to eq Season.new.end_of_grace_period
     end
 
     it "cash" do

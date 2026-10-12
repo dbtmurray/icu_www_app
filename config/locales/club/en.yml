@@ -1,5 +1,6 @@
 en:
   club:
+    button: Find a chess club
     club: Club
     clubs: Clubs
     co: Co.
@@ -17,6 +18,9 @@ en:
     long: Longitude
     map: Clubs Map
     meet: Meetings
+    notes: Notes
     phone: Phone
     province: Province
+    secretary: Secretary
+    select_secretary: Select Secretary
     web: Website

@@ -5,7 +5,27 @@ class Admin::ItemsController < ApplicationController
   def index
     authorize! :index, Item
     params[:format] = 'csv' if generating_csv?
-    @items = Item.search(params, admin_items_path)
+    @params = params.permit(:description, :type, :status, :payment_method, :player_id, :first_name, :last_name, :from_date, :to_date,
+                            :format, :commit, :fee_id, :event_id)
+
+    if params[:event_id].present?
+      event = Event.find_by(id: params[:event_id])
+      @title = I18n.t("item.items_for_event", event: event&.name || I18n.t("item.event_not_found"))
+    elsif params[:fee_id].present?
+      fee = Fee.find_by(id: params[:fee_id])
+      @title = I18n.t("item.items_for_fee", fee: fee&.name || I18n.t("item.fee_not_found"))
+    else
+      @title = I18n.t("item.items")
+    end
+
+    # A hash condition is used in ability.rb due to accessible_by not working with the nested joins
+    # This is ugly but it prevents an AssocationError
+    if can?(:index, Item::Entry) && can?(:index, Item::Subscription) && can?(:index, Item::Other)
+      @items = Item.search(params, admin_items_path)
+    else
+      @items = Item::Entry.accessible_by(current_ability).search(params, admin_items_path)
+    end
+
     flash.now[:warning] = t("no_matches") if @items.count == 0
 
     respond_to do |format|
@@ -23,7 +43,7 @@ class Admin::ItemsController < ApplicationController
         send_data txt_data, filename: "#{params[:description]}.txt", type: 'text/txt'
       end
     end
-  end
+  end  
   
   def sales_ledger
     authorize! :sales_ledger, Item
@@ -36,7 +56,11 @@ class Admin::ItemsController < ApplicationController
   end
 
   def update
-    @item.update_attributes(item_params)
+    unless @item.is_a?(Item::Entry) && @item.movable_sections.include?(item_params[:section])
+      redirect_to edit_admin_item_path(@item), alert: t("item.move.invalid_section")
+      return
+    end
+    @item.update(item_params)
     redirect_to event_path(@item.fee.event_id) if @item.fee.event_id
   end
 
@@ -58,7 +82,7 @@ class Admin::ItemsController < ApplicationController
 
   def csv_data
     generator = Admin::EntryListCsvGenerator.new
-    generator.generate_from_items(@items, params[:description])
+    generator.generate_from_items(@items.includes(fee: :event), params[:description], can?(:show, Cart))
   end
 
   def txt_data

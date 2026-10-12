@@ -34,6 +34,30 @@ class Item::Subscription < Item
     description.sub(/ ICU Subscription \d{4}-\d{2}\z/, "")
   end
 
+  def self.new_lifetime_member(player_id)
+    player = Player.where(id: player_id).first
+    raise ArgumentError, "Invalid ICU ID" unless not player.nil? # checks if the ICU ID is valid
+      
+    sub = Item::Subscription.where(["player_id = ? AND description LIKE 'Lifetime%'", player_id]).first
+    raise ArgumentError, "Already a lifetime member" unless sub.nil? # checks if the player is already a lifetime member
+
+    lifetime_sub = Item::Subscription.new(description: "Lifetime ICU Subscription", player_id: player_id, status: "paid", source: "www1", payment_method: "free")
+    lifetime_sub.save!
+
+    for user in player.users
+      user.update!(expires_on: Date.new(Date.today.year) + 100.years)
+    end
+  end
+
+  def season_ticket
+    t = SeasonTicket.new(player.id, end_date.at_end_of_year)
+    raise t.error if t.error
+    t.to_s
+  rescue => e
+    Failure.log("SubscriptionSeasonTicket", cart: cart.present? && cart.id, player: player.present? && player.id, end_date: end_date.present? && end_date.to_s, error: e.message, exception: e.class.to_s)
+    nil
+  end
+
   private
 
   def no_duplicates
@@ -60,14 +84,5 @@ class Item::Subscription < Item
         errors.add(:base, I18n.t("errors.alerts.application"))
       end
     end
-  end
-
-  def season_ticket
-    t = SeasonTicket.new(player.id, end_date.at_end_of_year)
-    raise t.error if t.error
-    t.to_s
-  rescue => e
-    Failure.log("SubscriptionSeasonTicket", cart: cart.present? && cart.id, player: player.present? && player.id, end_date: end_date.present? && end_date.to_s, error: e.message, exception: e.class.to_s)
-    nil
   end
 end

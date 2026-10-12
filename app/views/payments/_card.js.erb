@@ -1,4 +1,100 @@
-Stripe.setPublishableKey('<%= Rails.application.secrets.stripe["public"] %>');
+const stripe = Stripe('<%= Rails.application.secrets.stripe[:public] %>');
+$(function() {
+
+  $('#javascript-message').hide();
+  $('#submit-btn').prop('disabled', false);
+
+  const options = {
+    clientSecret: "<%= @intent.client_secret %>"
+  };
+
+  const elements = stripe.elements(options);
+
+  const paymentElement = elements.create('payment'<% if Rails.env.test? %>, {
+    fields: {
+      billingDetails: {
+        address: { country: 'never', postalCode: 'never' }
+      }
+    }
+  }<% end %>)
+  paymentElement.mount('#payment-element')
+
+  $('#stripe_form').on('submit', function(e) {
+    e.preventDefault();
+
+    $('#submit-btn').prop('disabled', true).text('Processing...');
+    startSpinner();
+
+    if (!validName()) {
+      $('#submit-btn').prop('disabled', false).text('Pay');
+      showError('<%= escape_single_quoted(t("shop.payment.error.name")) %>');
+      stopSpinner();
+      return false
+    } else if (!validEmail()) {
+      $('#submit-btn').prop('disabled', false).text('Pay');
+      showError('<%= escape_single_quoted(t("shop.payment.error.email")) %>');
+      stopSpinner();
+      return false
+    }
+
+    stripe.confirmPayment({
+      elements,
+      redirect: 'if_required'<% if Rails.env.test? %>,
+      confirmParams: {
+        payment_method_data: {
+          billing_details: { address: { country: 'IE', postal_code: '' } }
+        }
+      }<% end %>
+    }).then(function(result) {
+      if (result.error) {
+        // Inform the customer that there was an error.
+        sendError(result.error);
+        showError(result.error.message);
+        stopSpinner();
+        $('#submit-btn').prop('disabled', false).text('Pay');
+      } else {
+        $('#confirmation_email').val($('#email').val());
+        $('#payment_intent_id').val(result.paymentIntent.id);
+        $('#stripe_form').off('submit').submit();
+      }
+    });
+  });
+});
+
+function validName() {
+  var el = $('#name');
+  var name = el.val().trim();
+  el.val(name);
+  return name.length > 0;
+}
+
+function validEmail() {
+  var el = $('#email');
+  var email = el.val().trim();
+  el.val(email);
+  return email.match(/^[^\s@]+@[^\s@]+$/);
+}
+
+function showError(message) {
+  $('#payment_error_message').text(message);
+  var el = $('#payment_error');
+  if (el.is(':visible')) {
+    el.fadeOut(100).fadeIn(100)
+  } else {
+    el.show();
+  }
+}
+
+function sendError(error) {
+  $.post("/new_payment_error", {
+    error: error,
+    name: $('#name').val(),
+    email: $('#email').val()
+  });
+}
+
+
+/*Stripe.setPublishableKey('<%= Rails.application.secrets.stripe["public"] %>');
 var icuPaymentError = {
   gateway: '<%= escape_single_quoted(t("shop.payment.error.gateway")) %>',
   number:  '<%= escape_single_quoted(t("shop.payment.error.number")) %>',
@@ -97,3 +193,4 @@ function showError(message) {
     el.show();
   }
 }
+*/

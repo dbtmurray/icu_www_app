@@ -27,4 +27,130 @@ describe Ability do
     end
 
   end
+
+  context "Club secretary" do
+    let(:secretary) { create(:user) }
+    let(:other_user) { create(:user) }
+    let(:club) { create(:club, secretary_id: secretary.player_id) }
+    let(:other_club) { create(:club, name: "Cork Chess Club") }
+
+    it "can edit and update their own club" do
+      ability = Ability.new(secretary)
+      expect(ability.can?(:edit, club)).to be true
+      expect(ability.can?(:update, club)).to be true
+    end
+
+    it "cannot edit or update other clubs" do
+      ability = Ability.new(secretary)
+      expect(ability.can?(:edit, other_club)).to be false
+      expect(ability.can?(:update, other_club)).to be false
+    end
+
+    it "other users cannot edit or update the club" do
+      ability = Ability.new(other_user)
+      expect(ability.can?(:edit, club)).to be false
+      expect(ability.can?(:update, club)).to be false
+    end
+  end
+
+  context "Event permissions" do
+    let(:creator) { create(:user, roles: "organiser") }
+    let(:full_user) { create(:user, roles: "organiser") }
+    let(:limited_user) { create(:user, roles: "organiser") }
+    let(:other_user) { create(:user) }
+    let(:event) { create(:event, user: creator, subscription_required: false) }
+
+    before do
+      create(:event_user, event: event, user: full_user, role: "full_access")
+      create(:event_user, event: event, user: limited_user, role: "limited_access")
+    end
+
+    context "creator" do
+      let(:ability) { Ability.new(creator) }
+
+      it "can manage their own event" do
+        expect(ability.can?(:manage, event)).to be true
+      end
+
+      it "can manage event_users for their event" do
+        event_user = create(:event_user, event: event)
+        expect(ability.can?(:create, event_user)).to be true
+        expect(ability.can?(:destroy, event_user)).to be true
+      end
+    end
+
+    context "full_access user" do
+      let(:ability) { Ability.new(full_user) }
+
+      it "can read and update event" do
+        expect(ability.can?(:read, event)).to be true
+        expect(ability.can?(:update, event)).to be true
+      end
+
+      it "cannot destroy event" do
+        expect(ability.can?(:destroy, event)).to be false
+      end
+
+      it "cannot manage event_users" do
+        event_user = create(:event_user, event: event)
+        expect(ability.can?(:create, event_user)).to be false
+        expect(ability.can?(:destroy, event_user)).to be false
+      end
+
+      it "can create, read and update fees the creator added, but not delete them" do
+        fee = create(:entry_fee, event: event)
+        expect(ability.can?(:create, Fee::Entry.new(event: event))).to be true
+        expect(ability.can?(:read, fee)).to be true
+        expect(ability.can?(:update, fee)).to be true
+        expect(ability.can?(:destroy, fee)).to be false
+        expect(Fee::Entry.accessible_by(ability)).to eq [fee]
+      end
+
+      it "can read and update the event's entries" do
+        item = create(:entry_item, fee: create(:entry_fee, event: event))
+        expect(ability.can?(:read, item)).to be true
+        expect(ability.can?(:update, item)).to be true
+        expect(ability.can?(:destroy, item)).to be false
+      end
+
+      it "cannot touch fees or entries for other events" do
+        other_fee = create(:entry_fee, name: "Other", event: create(:event, subscription_required: false))
+        expect(ability.can?(:update, other_fee)).to be false
+        expect(ability.can?(:update, create(:entry_item, fee: other_fee))).to be false
+      end
+    end
+
+    context "limited_access user" do
+      let(:ability) { Ability.new(limited_user) }
+
+      it "can only read event" do
+        expect(ability.can?(:read, event)).to be true
+        expect(ability.can?(:show, event)).to be true
+        expect(ability.can?(:update, event)).to be false
+        expect(ability.can?(:destroy, event)).to be false
+      end
+
+      it "cannot update fees or entries" do
+        fee = create(:entry_fee, event: event)
+        expect(ability.can?(:update, fee)).to be false
+        expect(ability.can?(:update, create(:entry_item, fee: fee))).to be false
+      end
+    end
+
+    context "editor role" do
+      let(:editor) { create(:user, roles: "editor") }
+      let(:editor_event) { create(:event, user: editor) }
+      let(:ability) { Ability.new(editor) }
+
+      it "has same event permissions as organiser" do
+        expect(ability.can?(:manage, editor_event)).to be true
+        expect(ability.can?(:index, Event)).to be true
+      end
+
+      it "cannot manage fees or items" do
+        entry_fee = create(:entry_fee, event: editor_event)
+        expect(ability.can?(:manage, entry_fee)).to be false
+      end
+    end
+  end
 end

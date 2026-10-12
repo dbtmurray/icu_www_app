@@ -1,6 +1,6 @@
 - content_for :title, t("item.items")
 
-= render "utils/search_panel", form: "search_form", title: t("item.items"), col: "md"
+= render "utils/search_panel", form: "search_form", title: @title, col: "md"
 
 - if @items.count > 0
   .row
@@ -8,26 +8,32 @@
       %table{class: "table table-striped"}
         %thead
           %tr
+            %th= t("id")
             %th= t("description")
             %th= t("player.player")
             %th= t("item.cost")
             %th= t("shop.payment.status.status")
             %th= t("shop.payment.method.method_short")
-            %th= t("date")
+            %th= t("date_label")
             %th= t("notes")
             %th= t("shop.cart.cart_id")
         %tbody
           - @items.matches.each do |item|
             %tr
-              %td= item.description
+              %td= item.id
+              %td
+                = item.description
+                - if item.is_a?(Item::Entry) && (event = item.fee&.event)
+                  %br
+                  %small= link_to "#{event.name} (#{event.id})", event
               %td= item.player_name
               %td{class: "righted"}= euros(item.cost)
               %td= t("shop.payment.status.#{item.status}")
               %td= t("shop.payment.method.#{item.payment_method}") if item.payment_method
               %td= to_date(item.created_at)
               %td= item.abbreviated_notes
-              %td.text-center= link_to item.cart_id, [:admin, item.cart] if item.cart
-          = render "utils/pagination_links", pager: @items, columns: 8
+              %td.text-center= can?(:show, Cart) ? (link_to item.cart_id, [:admin, item.cart] if item.cart) : item.cart_id
+          = render "utils/pagination_links", pager: @items, columns: 9
       .text-center
-        = link_to t("item.csv"), admin_items_path(params.merge(format: :csv)), class: "btn btn-info" if params[:description].present?
-        = link_to t("item.txt"), admin_items_path(params.merge(format: :txt)), class: "btn btn-info" if params[:description].present?
+        = link_to t("item.csv"), admin_items_path(@params.merge(format: :csv)), class: "btn btn-info" if params[:description].present?
+        = link_to t("item.txt"), admin_items_path(@params.merge(format: :txt)), class: "btn btn-info" if params[:description].present?

@@ -27,7 +27,7 @@ describe Item::Subscription do
     end
 
     it "normally a fee is required" do
-      expect{create(:nofee_subscription_item)}.to raise_error
+      expect{create(:nofee_subscription_item)}.to raise_error(ActiveRecord::RecordInvalid)
     end
   end
 
@@ -120,19 +120,41 @@ describe Item::Subscription do
 
   context "player data" do
     let(:new_player_json) { build(:new_player).to_json }
+    let(:subscription_fee) { create(:subscription_fee) }
 
     it "blank" do
-      item = build(:subscription_item, player_data: "")
+      item = build(:subscription_item, fee: subscription_fee, player_data: "")
       expect(item).to be_valid
       expect(item.player_data).to be_nil
     end
 
     it "present with player" do
-      expect(build(:subscription_item, player_data: new_player_json)).to be_valid
+      expect(build(:subscription_item, fee: subscription_fee, player_data: new_player_json)).to be_valid
     end
 
     it "present without player" do
-      expect(build(:subscription_item, player_data: new_player_json, player: nil)).to be_valid
+      expect(build(:subscription_item, fee: subscription_fee, player_data: new_player_json, player: nil)).to be_valid
+    end
+  end
+
+  context "new lifetime member" do
+    it "invalid ICU id" do
+      expect{ Item::Subscription.new_lifetime_member(-1) }.to raise_error(ArgumentError, "Invalid ICU ID")
+    end
+
+    it "blocked by existing lifetime membership" do
+      sub = create(:lifetime_subscription)
+      expect{ Item::Subscription.new_lifetime_member(sub.player_id) }.to raise_error(ArgumentError, "Already a lifetime member")
+    end
+
+    it "successful" do
+      player = create(:player)
+      create(:paid_subscription_item, player: player)
+      create(:user, player: player)
+      expect{ Item::Subscription.new_lifetime_member(player.id) }.to_not raise_error
+      for user in player.users
+        expect(user.expires_on).to eq(Date.new(Date.today.year) + 100.years)
+      end
     end
   end
 end

@@ -9,6 +9,10 @@ class PaymentsController < ApplicationController
   def cart
     load_cart(:create)
     redirect_to shop_path unless @cart
+
+    if @cart.has_expired_items?
+      @cart.refresh_items
+    end
   end
 
   def card
@@ -20,6 +24,14 @@ class PaymentsController < ApplicationController
     if @cart.total_cost == 0
       render "zero_cost_card"
     end
+
+    if @cart.has_expired_items?
+      # Only should occur if the user gets to /card without going through /cart
+      flash[:warning] = t("shop.payment.expired_items")
+      redirect_to cart_path
+    end
+
+    @intent = @cart.create_intent if @cart.total_cost > 0
   end
 
   def charge
@@ -27,7 +39,7 @@ class PaymentsController < ApplicationController
     if @cart && !@cart.items.empty?
       @cart.purchase(params, current_user)
       complete_cart(@cart.id) if @cart.paid?
-      redirect_to shop_path unless request.xhr?
+      redirect_to confirm_path
     else
       if request.xhr?
         render nothing: true
@@ -44,6 +56,21 @@ class PaymentsController < ApplicationController
 
   def completed
     @completed_carts = completed_carts
+  end
+
+  def new_payment_error
+    load_cart
+    if @cart.nil? || @cart.items.empty?
+      redirect_to shop_path
+      return
+    end
+    @cart.add_payment_error(params[:error], params[:name], params[:email])
+    
+    if request.xhr?
+      render json: nil, status: :ok
+    else
+      redirect_to shop_path
+    end
   end
 
   private

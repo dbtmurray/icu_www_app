@@ -1,4 +1,4 @@
-#article_ids_modal{class: "modal fade", tabindex: "-1", role: "dialog", "aria-labelledby" => "modal_label", "aria-hidden" => "true"}
+#article_ids_modal{class: "modal fade", style: "display: none;", tabindex: "-1", role: "dialog", "aria-labelledby" => "modal_label", "aria-hidden" => "true"}
   .modal-dialog
     .modal-content
       .modal-header
@@ -8,4 +8,4 @@
         = render "admin/article_ids/search_form"
         #article_ids_results
 %script
-  = render "admin/article_ids/attach_callbacks.js"
+  = render(:partial => "admin/article_ids/attach_callbacks", :handlers => [:erb], :formats => [:js])

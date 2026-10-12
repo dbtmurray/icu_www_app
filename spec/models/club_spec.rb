@@ -3,6 +3,23 @@ require 'rails_helper'
 describe Club do
   let(:bangor) { create(:club) }
 
+  context "secretary" do
+    it "can be blank" do
+      bangor.secretary_id = nil
+      expect{ bangor.save! }.to_not raise_error
+    end
+
+    it "can be an existing player" do
+      bangor.secretary_id = create(:player).id
+      expect{ bangor.save! }.to_not raise_error
+    end
+
+    it "must reference an existing player" do
+      bangor.secretary_id = 999999
+      expect{ bangor.save! }.to raise_error(/does not exist/i)
+    end
+  end
+
   context "latitude and longitude" do
     it "can be blank" do
       bangor.lat = nil
@@ -97,6 +114,20 @@ describe Club do
       expect(club.web).to be_nil
       expect(club.lat).to be_nil
       expect(club.long).to be_nil
+    end
+  end
+
+  context "meeting day search" do
+    it "finds clubs by meeting day without duplicates" do
+      tuesday = create(:club, name: "Tuesday Club")
+      other = create(:club, name: "Wednesday Club")
+      tuesday.club_meetings.create!(day_of_week: "tuesday", start_time: "19:00")
+      tuesday.club_meetings.create!(day_of_week: "tuesday", start_time: "20:00")
+      other.club_meetings.create!(day_of_week: "wednesday", start_time: "19:00")
+
+      results = Club.search({ day_of_week: "tuesday" }, "/clubs")
+      expect(results.count).to eq(1)
+      expect(results.matches.to_a).to eq([tuesday])
     end
   end
 end

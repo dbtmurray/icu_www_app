@@ -3,12 +3,14 @@ class Admin::ArticlesController < ApplicationController
   authorize_resource
 
   def new
-    @article = Article.new
+    @article = Article.new(title: params[:title], text: params[:text])
   end
 
   def create
     @article = Article.new(article_params)
+    set_selected_categories
     @article.user_id = current_user.id
+    @article.markdown = false
 
     if @article.save
       @article.journal(:create, current_user, request.remote_ip)
@@ -21,6 +23,8 @@ class Admin::ArticlesController < ApplicationController
 
   def update
     normalize_newlines(:article, :text)
+    set_selected_categories
+    @article.markdown = false
     if @article.update(article_params)
       @article.journal(:update, current_user, request.remote_ip)
       redirect_to @article, notice: "Article was successfully updated"
@@ -43,6 +47,14 @@ class Admin::ArticlesController < ApplicationController
   end
 
   def article_params
-    params[:article].permit(:access, :active, :author, :category, :markdown, :text, :title, :year)
+    params[:article].permit(:access, :active, :author, :text, :title, :year)
+  end
+
+  def set_selected_categories
+    if params[:article][:selected_categories].present?
+      @article.selected_categories = params[:article][:selected_categories]
+      # We need to delete the selected_categories param to avoid warnings in the Article update method.
+      params[:article].delete(:selected_categories)
+    end
   end
 end

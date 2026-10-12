@@ -47,21 +47,23 @@ class Admin::SeriesController < ApplicationController
   end
 
   def update_episodes
-    delete_episodes
-    add_episodes
+    ActiveRecord::Base.transaction do
+      delete_episodes
+      add_episodes
+    end
   end
 
   def delete_episodes
     article_ids = @series.articles.map(&:id)
     old_ids = article_ids - (params[:keep] || []).map(&:to_i)
     old_ids.each do |id|
-      episode = Episode.find_by(article_id: id, series_id: @series.id)
+      episode = @series.episodes.find_by(article: id)
       episode.destroy if episode
     end
   end
 
   def add_episodes
-    article_ids = @series.articles(true).map(&:id)
+    article_ids = Article.joins(:episodes).where(episodes: { series_id: @series.id }).pluck(:id)
     new_ids = id_num_pairs.reject{ |pair| article_ids.include?(pair[:id]) }
     new_ids.each do |pair|
       article = Article.find_by(id: pair[:id])

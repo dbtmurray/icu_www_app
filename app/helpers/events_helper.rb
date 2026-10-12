@@ -11,16 +11,49 @@ module EventsHelper
   end
 
   def event_year_menu(selected)
-    years = (2005..Date.today.year).to_a.reverse.map { |y| [y, y] }
+    years = (2005..Date.today.year + 2).to_a.reverse.map { |y| [y, y] }
     options_for_select(years, selected)
   end
 
-  def events_menu(selected_event_id, events)
-    options_for_select(([Event.new(name: '')] + events).map { |event| [event.name, event.id] }, selected_event_id)
+  def user_menu(selected_user_id, default=nil)
+    users = User.vips.by_name.map { |user| [user.name, user.id] }
+    users.unshift([default, ""]) if default
+    options_for_select(users, selected_user_id)
   end
 
-  def user_menu(selected_user_id)
-    options_for_select(User.vips.by_name.map { |user| [user.name, user.id] }, selected_user_id)
+  def formatted_event_dates(event)
+    start_date = event.start_date
+    end_date = event.end_date
+
+    start_day = start_date.day.ordinalize
+    end_day = end_date.day.ordinalize
+
+    if start_date == end_date
+      # Fri 29th May 2026
+      "#{start_date.strftime('%a')} #{start_day} #{start_date.strftime('%B %Y')}"
+    elsif start_date.month == end_date.month
+      # Fri 29th - Sat 30th May 2026
+      "#{start_date.strftime('%a')} #{start_day} - #{end_date.strftime('%a')} #{end_day} #{start_date.strftime('%B %Y')}"
+    else
+      # "Fri 29th May - Mon 1st June 2026"
+      "#{start_date.strftime('%a')} #{start_day} #{start_date.strftime('%B')} - #{end_date.strftime('%a')} #{end_day} #{end_date.strftime('%B %Y')}"
+    end
+  end
+
+  # ["classical", "rapid"] => "Classical, Rapid"
+  def time_controls_as_string(event)
+    event.time_controls.map do |control|
+      t("event.time_controls.#{control}")
+    end.join(", ")
+  end
+
+  def event_has_links?(event)
+    event.pairings_url.present? ||
+      event.live_games_url.present? ||
+      event.live_games_url2.present? ||
+      event.results_url.present? ||
+      event.report_url.present? ||
+      event.streaming_url.present?
   end
 
   # @param entry_item [Item::Entry]
@@ -64,5 +97,57 @@ module EventsHelper
     end
 
     "#{descr} #{extras.join(', ')}"
+  end
+
+  # @param fee_entry [Fee::Entry]
+  def event_entry_fee_requirements(fee_entry)
+    reqs = []
+    if fee_entry.min_age.present? && fee_entry.max_age.present?
+      reqs << "aged #{fee_entry.min_age}-#{fee_entry.max_age}"
+    elsif fee_entry.min_age.present?
+      reqs << "aged #{fee_entry.min_age} or over"
+    elsif fee_entry.max_age.present?
+      reqs << "aged #{fee_entry.max_age} or under"
+    end
+
+    if fee_entry.min_rating.present? && fee_entry.max_rating.present?
+      reqs << "rated #{fee_entry.min_rating}-#{fee_entry.max_rating}"
+    elsif fee_entry.min_rating.present?
+      reqs << "rated >= #{fee_entry.min_rating}"
+    elsif fee_entry.max_rating.present?
+      reqs << "rated <= #{fee_entry.max_rating}"
+    end
+
+    reqs.join(', ')
+  end
+
+  # Format fee display with optional strikethrough discount styling
+  def format_fee_with_discount(fee)
+    if fee.discounted?
+      content_tag(:span) do
+        concat content_tag(:s, euros(fee.amount))
+        concat " "
+        concat euros(fee.current_amount)
+      end
+    else
+      euros(fee.current_amount)
+    end
+  end
+
+  # Calculate total amount paid fees for event
+  def event_total_paid_fees(event)
+    event.fee_entries.sum do |fee|
+      fee.items.paid.sum(:cost)
+    end
+  end
+
+  # Count of total paid entries across all fees
+  def event_count_paid_fees(event)
+    event.fee_entries.sum { |fee| fee.items.paid.count }
+  end
+
+  # Count paid entries for a specific fee
+  def fee_paid_entries_count(fee)
+    fee.items.paid.count
   end
 end

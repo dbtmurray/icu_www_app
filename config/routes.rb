@@ -7,14 +7,14 @@ IcuWwwApp::Application.routes.draw do
   get  "redirect" => "redirects#redirect"
   get  "header"   => "header#control"
 
-  %w[home home2 links juniors beginners for_parents primary_schools secondary_schools].each do |page|
+  %w[home home2 links juniors women beginners for_parents organisers primary_schools secondary_schools].each do |page|
     get page => "pages##{page}"
   end
   %w[clubs events].each do |page|
     get "maps/#{page}(/:id)" => "maps##{page}", as: "#{page}_map"
   end
-  %w[shop cart card charge confirm completed].each do |page|
-    match page => "payments##{page}", via: page == "charge" ? :post : :get
+  %w[shop cart card charge confirm completed new_payment_error].each do |page|
+    match page => "payments##{page}", via: page == "charge" || page == "new_payment_error" ? :post : :get
   end
   %w[account preferences update_preferences].each do |page|
     match "#{page}/:id" => "users##{page}", via: page.match(/^update/) ? :post : :get, as: page
@@ -26,6 +26,9 @@ IcuWwwApp::Application.routes.draw do
     get "help/#{page}" => "help##{page}"
   end
 
+  resources :arbiters
+  get "admin/arbiters/new", to: "arbiters#new", as: "new_admin_arbiter"
+
   resources :articles,    only: [:index, :show] do
     get :source, on: :member
   end
@@ -35,9 +38,11 @@ IcuWwwApp::Application.routes.draw do
   resources :documents,   only: [:index, :show, :new, :create, :edit, :update]
   resources :downloads,   only: [:index, :show]
   resources :events,      only: [:index, :show] do
+    get :history, on: :collection
     member do
       get :swiss_manager
       get :csv_list
+      get :excel_list
     end
   end
 
@@ -70,28 +75,35 @@ IcuWwwApp::Application.routes.draw do
       get page => "pages##{page}"
     end
 
+    get "deployment_info" => "deployment_info#show"
     resources :articles,        only: [:new, :create, :edit, :update, :destroy]
     resources :article_ids,     only: [:index]
     resources :bad_logins,      only: [:index]
     resources :carts,           only: [:index, :show, :edit, :update] do
-      get :show_charge, on: :member
+      get :show_intent, on: :member
     end
     resources :cash_payments,   only: [:new, :create]
     resources :champions,       only: [:new, :create, :edit, :update, :destroy]
     resources :clubs,           only: [:new, :create, :edit, :update]
     resources :downloads,       only: [:show, :new, :create, :edit, :update, :destroy]
-    resources :events,          only: [:new, :create, :edit, :update, :destroy]
+    resources :events do
+      resources :event_users, only: [:create, :destroy]
+    end
+    resources :event_ids,      only: [:index]
     resources :failures,        only: [:index, :show, :new, :update, :destroy]
     resources :fees do
-      get :rollover, :clone, on: :member
+      get :rollover, on: :member
+      get :clone, on: :member
     end
     resources :games,           only: [:edit, :update, :destroy]
     resources :images,          only: [:new, :create, :edit, :update, :destroy]
+    resources :image_ids,      only: [:index]
     resources :items,           only: [:index, :edit, :update] do
       get :sales_ledger, on: :collection
     end
     resources :junior_newsletters, only: [:index]
     resources :journal_entries, only: [:index, :show]
+    resources :life_members, only: [:new, :create]
     resources :logins,          only: [:index, :show]
     resources :mail_events,     only: [:index]
     resources :news,            only: [:new, :create, :edit, :update, :destroy]
@@ -101,7 +113,9 @@ IcuWwwApp::Application.routes.draw do
     resources :players,         only: [:show, :new, :create, :edit, :update]
     resources :refunds,         only: [:index]
     resources :relays,          only: [:index, :show, :edit, :update] do
-      get :refresh, :enable_all, :disable_all, on: :collection
+      get :refresh, on: :collection
+      get :enable_all, on: :collection
+      get :disable_all, on: :collection
     end
     resources :results, except: [:show] do
       member do
@@ -117,6 +131,7 @@ IcuWwwApp::Application.routes.draw do
     resources :user_inputs,     only: [:show, :new, :create, :edit, :update, :destroy]
     resources :users do
       get :login, on: :member
+      get :verify, on: :member
     end
   end
 

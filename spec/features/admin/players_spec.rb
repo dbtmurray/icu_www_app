@@ -24,7 +24,8 @@ describe Player do
     let(:header) { "h1" }
     let(:level1) { %w[admin membership] }
     let(:level2) { %w[inspector] }
-    let(:level3) { User::ROLES.reject { |role| level1.include?(role) || level2.include?(role) }.append("guest") }
+    let(:level3) { User::ROLES.reject { |role| level1.include?(role) || level2.include?(role) } }
+    let(:level4) { %w[guest] }
     let(:player) { create(:player) }
 
     it "level 1 can manage" do
@@ -67,6 +68,20 @@ describe Player do
         expect(page).to have_css(failure, text: unauthorized)
         visit players_path
         expect(page).to_not have_css(failure)
+        visit admin_player_path(player)
+        expect(page).to have_css(failure, text: unauthorized)
+      end
+    end
+
+    it "level 4 cannot view anything" do
+      level4.each do |role|
+        login role
+        visit new_admin_player_path
+        expect(page).to have_css(failure, text: unauthorized)
+        visit edit_admin_player_path(player)
+        expect(page).to have_css(failure, text: unauthorized)
+        visit players_path
+        expect(page).to have_css(failure, text: unauthorized)
         visit admin_player_path(player)
         expect(page).to have_css(failure, text: unauthorized)
       end
@@ -231,7 +246,7 @@ describe Player do
       expect(player.duplicate?).to be true
       expect(player.player_id).to eq master.id
       expect(player.status).to eq "inactive"
-      click_link master.id
+      click_link master.id.to_formatted_s
       expect(page).to have_css("h1", text: master.name)
     end
 

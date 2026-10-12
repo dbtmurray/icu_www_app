@@ -10,14 +10,30 @@ This is a receipt from the ICU for your payment of <%= euros(cart.total) %> on <
 Your purchased item is:
 
   <%= cart.items.first.full_description %>
+<%- item_reference_lines(cart.items.first).each do |line| %>
+  <%= line %>
+<%- end %>
 <%- else %>
 Your purchased items are as follows:
 
 <%- cart.items.each_with_index do |item, i| %>
   <%= i + 1 %>. <%= item.full_description %>
+<%- indent = " " * "#{i + 1}. ".length %>
+<%- item_reference_lines(item).each do |line| %>
+  <%= indent %><%= line %>
+<%- end %>
 <%- end %>
 <%- end %>
 
 To enquire about this payment please email <%= cart.payment_method == "stripe" ? "webmaster" : "treasurer" %>@icu.ie and quote cart ID <%= cart.id %>.
+<%- sign_ups = cart.items.map { |item| [item, sign_up_link(item, cart)] }.select(&:last) %>
+<%- if sign_ups.any? %>
+
+To log in to the ICU website you need a user account. Use the following link<%= sign_ups.size == 1 ? "" : "s" %> to create one with your ICU ID, season ticket and email already filled in:
+<%- sign_ups.each do |item, link| %>
+
+  <%= item.player.name(id: true) %>: <%= link %>
+<%- end %>
+<%- end %>
 
 Regards, The Irish Chess Union

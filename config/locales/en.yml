@@ -2,17 +2,49 @@ en:
   active: Active
   address: Address
   all: All
+  aria:
+    search_for: Search for
   any: Any
   by: by
   beta: Beta quality software
   cancel: Cancel
+  categories: Categories
   category: Category
   city: City
   comment: Comment
   confirm: Confirm
   contact: Contact
   created_at: Created
-  date: Date
+  date_label: Date
+  date:
+    month_names:
+      - ~
+      - January
+      - February
+      - March
+      - April
+      - May
+      - June
+      - July
+      - August
+      - September
+      - October
+      - November
+      - December
+    abbr_month_names:
+      - ~,
+      - Jan,
+      - Feb,
+      - Mar,
+      - Apr,
+      - May,
+      - Jun,
+      - Jul,
+      - Aug,
+      - Sep,
+      - Oct,
+      - Nov,
+      - Dec
   dates: Dates
   date_format: YYYY-MM-DD
   default: default
@@ -20,6 +52,7 @@ en:
   description: Description
   details: Details
   edit: Edit
+  eircode: Eircode
   either: Either
   email: Email
   file: File
@@ -29,6 +62,8 @@ en:
   last_search: Last Search
   latitude: Latitude
   longitude: Longitude
+  list: List
+  map: Map
   migration_date: 24th July 2014
   member: Member
   more: More

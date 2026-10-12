@@ -1,4 +1,4 @@
-class Document < ActiveRecord::Base
+class Document < ApplicationRecord
   FORMATS = %w(MARKDOWN HAML HTML )
   belongs_to :changed_by, class_name: "User"
   belongs_to :previous_version, class_name: "Document"
@@ -19,7 +19,7 @@ class Document < ActiveRecord::Base
       when "HTML"
         return content.html_safe
       when "HAML"
-        return haml_to_html
+        return haml_to_html.html_safe
       when "MARKDOWN"
         return markdown_to_html
     end
@@ -35,7 +35,7 @@ class Document < ActiveRecord::Base
   private
 
   def haml_to_html
-    engine = Haml::Engine.new(content)
+    engine = Haml::Template.new { content }
     return engine.render
   end
 

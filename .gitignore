@@ -17,3 +17,7 @@
 .DS_Store
 /.idea/*
 /.idea/*/*
+
+.vscode
+spec/examples.txt
+/coverage

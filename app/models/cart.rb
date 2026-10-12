@@ -1,4 +1,4 @@
-class Cart < ActiveRecord::Base
+class Cart < ApplicationRecord
   include Pageable
   include Payable
 
@@ -19,6 +19,19 @@ class Cart < ActiveRecord::Base
 
   def total_cost
     items.map(&:cost).reduce(0.0, :+)
+  end
+
+  def has_expired_items?
+    items.any?(&:discount_expired?)
+  end
+
+  # Updates the cost field of any items which have discounted amounts
+  # past the discount deadline
+  def refresh_items
+    return unless has_expired_items?
+    items.each do |item|
+      item.update(cost: item.fee.current_amount) if item.discount_expired?
+    end
   end
 
   def refundable?
@@ -48,31 +61,39 @@ class Cart < ActiveRecord::Base
   end
 
   def purchase(params, user)
-    token, name, email = %i[stripe_token payment_name confirmation_email].map { |n| params[n].presence }
-    total = total_cost
-    if total == 0
-      charge = nil
-    else
-      charge = Stripe::Charge.create(
-        amount: cents(total),
-        currency: "eur",
-        card: token,
-        description: ["Cart #{id}", name, email].reject { |d| d.nil? }.join(", "),
-        # receipt_email: email, # Stripe's confirmations are particularly helpful
-      )
+    email = params[:confirmation_email]
+    name = params[:payment_name]
+
+    begin
+      intent = Stripe::PaymentIntent.retrieve(params[:payment_intent_id]) if params[:payment_intent_id]
+    rescue Stripe::InvalidRequestError
+      # User disabled JS and submitted the form with a payment intent of an empty string.
+      add_payment_error({message: "Payment intent missing"}, name, email, "Something went wrong, please contact webmaster@icu.ie")
+      return
     end
-  rescue Stripe::CardError => e
-    add_payment_error(e, name, email)
-  rescue => e
-    add_payment_error(e, name, email, "Something went wrong, please contact webmaster@icu.ie")
-  else
-    if charge
-      successful_payment("stripe", charge.id, Cart.current_payment_account)
-    else
-      successful_payment("free", nil, Cart.current_payment_account)
+      
+    # Verify intent integrity, preventing a user from using a payment intent of a different amount
+    if intent and intent.amount != cents(total_cost)
+      add_payment_error(intent, name, email, "Payment intent amount (#{intent.amount}) does not match cart amount (#{cents(total_cost)})")
+      return
     end
-  ensure
-    update_cart(total, name, email, user)
+
+    if intent and intent.status == 'succeeded'  
+      latest_charge = intent.latest_charge
+      Stripe::PaymentIntent.update(intent.id, {description: ["Cart #{id}", name, email].reject { |d| d.nil? }.join(", "),})
+      successful_payment("stripe", intent.id, latest_charge, Cart.current_payment_account)
+    elsif intent and not intent.status == 'succeeded'
+      add_payment_error(intent, name, email, "Something went wrong, please contact webmaster@icu.ie")
+      return
+    elsif total_cost > 0.0
+      # Catches the rare cases where the user disables JS and deletes the payment intent from the form before submitting
+      add_payment_error({message: "Payment intent missing"}, name, email, "Something went wrong, please contact webmaster@icu.ie")
+      return
+    else
+      successful_payment("free", nil, nil, Cart.current_payment_account)
+    end
+
+    update_cart(total_cost, name, email, user)
     send_receipt
   end
 
@@ -82,19 +103,56 @@ class Cart < ActiveRecord::Base
     send_receipt
   end
 
+  def create_intent
+    intent = Stripe::PaymentIntent.create({
+      amount: cents(self.total_cost),
+      currency: 'eur',
+    })
+    intent
+  end
+
   def refund(item_ids, user)
     automatic = refundable?
     refund = Refund.new(user: user, cart: self, automatic: automatic)
-    charge = Stripe::Charge.retrieve(payment_ref) if automatic
-    refund.amount = refund_amount(item_ids, charge)
-    charge.refund(amount: cents(refund.amount)) if automatic
-    items.each do |item|
-      if item_ids.include?(item.id)
-        item.refund
+    intent = nil
+    charge = nil
+    is_old_charge = payment_ref&.start_with?("ch_") and automatic
+    is_pi = payment_ref&.start_with?("pi_") and automatic
+    intent = Stripe::PaymentIntent.retrieve(payment_ref) if is_pi # new object
+    charge = Stripe::Charge.retrieve(payment_ref) if is_old_charge # old object
+    
+    free_items = items.where(id: item_ids).where(cost: 0)
+    non_free_items_ids = items.where(id: item_ids).where.not(cost: 0).ids
+    
+    if non_free_items_ids.size > 0
+      amount = refund_amount(non_free_items_ids, is_pi ? intent : charge, is_old_charge)
+      refund.amount = amount
+
+      # new refund method
+      stripe_refund_object = Stripe::Refund.create({payment_intent: intent.id, amount: cents(amount)}) if is_pi
+
+      # old refund method
+      stripe_refund_object = Stripe::Refund.create({charge: charge.id, amount: cents(amount)}) if is_old_charge
+
+      if (is_pi or is_old_charge) and stripe_refund_object.status == "failed"
+        # catch refund failure
+        refund.error = "Stripe refund transaction failed"
+      else
+        items.each do |item|
+            if non_free_items_ids.include?(item.id)
+                item.refund
+            end
+        end
+        self.total -= refund.amount
       end
     end
-    self.status = self.total == refund.amount ? "refunded" : "part_refunded"
-    self.total -= refund.amount
+    
+    free_items.each do |item|
+      item.refund
+    end
+    
+    self.status = all_items_refunded? ? "refunded" : "part_refunded"
+    
     save!
     refund
   rescue => e
@@ -102,6 +160,17 @@ class Cart < ActiveRecord::Base
     refund
   ensure
     refund.save
+  end
+
+  def all_items_refunded?
+    items.all? do |i|
+      i.reload
+      i.refunded?
+    end
+  end
+
+  def any_items_refunded?
+    items.any? &:refunded?
   end
 
   def self.search(params, path)
@@ -127,7 +196,7 @@ class Cart < ActiveRecord::Base
   end
 
   def self.current_payment_account
-    @current_payment_account ||= Rails.application.secrets.stripe["public"].truncate(32, omission: "")
+    @current_payment_account ||= Rails.application.secrets.stripe[:public].truncate(32, omission: "")
   end
 
   def all_notes
@@ -138,13 +207,28 @@ class Cart < ActiveRecord::Base
     end
   end
 
+  def add_payment_error(error, name, email, message=nil)
+    message ||= error[:message] || "Unknown error"
+    details = error.try(:json_body)
+    if details.nil?
+      details = "Code: #{error[:code]}, Type: #{error[:type]}, Message: #{error[:message]}"
+    else
+      details = details.fetch(:error) { details } if details.is_a?(Hash)
+      details.delete(:message) if details.is_a?(Hash) && details[:message] == message
+      details = details.to_s
+    end
+    error = payment_errors.build(message: message.truncate(255), details: details.truncate(255), payment_name: name.to_s.truncate(100), confirmation_email: email.to_s.truncate(50))
+    error.save
+  end
+
   private
 
-  def successful_payment(payment_method, charge_id=nil, payment_account=nil)
+  def successful_payment(payment_method, payment_intent=nil, latest_charge=nil, payment_account=nil)
     self.status = "paid"
     self.payment_method = payment_method
     self.payment_account = payment_account
-    self.payment_ref = charge_id
+    self.payment_ref = payment_intent
+    self.latest_charge = latest_charge
     self.payment_completed = Time.now
     items.each { |item| item.complete(payment_method) }
   end
@@ -173,20 +257,7 @@ class Cart < ActiveRecord::Base
     (euros * 100).to_i
   end
 
-  def add_payment_error(error, name, email, message=nil)
-    message ||= error.message || "Unknown error"
-    details = error.try(:json_body)
-    if details.nil?
-      details = ""
-    else
-      details = details.fetch(:error) { details } if details.is_a?(Hash)
-      details.delete(:message) if details.is_a?(Hash) && details[:message] == message
-      details = details.to_s
-    end
-    payment_errors.build(message: message.truncate(255), details: details.truncate(255), payment_name: name.to_s.truncate(100), confirmation_email: email.to_s.truncate(50))
-  end
-
-  def refund_amount(item_ids, charge)
+  def refund_amount(item_ids, intent, is_old_charge)
     # Check that the cart_items to be refunded all belong to this cart and have "paid" status.
     refund_amount = 0.0
     item_ids.each do |item_id|
@@ -197,14 +268,16 @@ class Cart < ActiveRecord::Base
     end
 
     # If there's a charge object (we're automatically refunding the payment as well as updating the database).
-    if charge
+    if intent
       # Check that the ICU cart and Stripe totals are consistent.
-      unless cents(original_total) == charge.amount
-        raise "Cart amount (#{cents(original_total)}) is inconsistent with Stripe amount (#{charge.amount})"
+      unless cents(original_total) == intent.amount
+        raise "Cart amount (#{cents(original_total)}) is inconsistent with Stripe amount (#{intent.amount})"
       end
 
       # Check any previous refund amounts are consistent.
       cart_refund = cents(original_total) - cents(total)
+      charge = intent
+      charge = Stripe::Charge.retrieve(intent.latest_charge) unless is_old_charge
       unless cart_refund == charge.amount_refunded
         raise "Previous cart refund (#{cart_refund}) is inconsistent with previous Stripe refund (#{charge.amount_refunded})"
       end
@@ -224,8 +297,15 @@ class Cart < ActiveRecord::Base
         raise "Refund amount (#{refund_amount}) doesn't match total (#{total})"
       end
     else
-      unless refund_amount < total
-        raise "Refund amount (#{refund_amount}) should be less than total (#{total})"
+      free_items = items.select{ |item| item.cost == 0 and not item_ids.include? item.id }
+      if free_items.size == 0
+        unless refund_amount < total
+          raise "Refund amount (#{refund_amount}) should be less than total (#{total})" unless total == 0.0
+        end
+      else
+        unless refund_amount <= total
+          raise "Refund amount (#{refund_amount}) should be less than total (#{total})" unless total == 0.0
+        end
       end
     end
 

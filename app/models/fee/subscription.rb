@@ -1,6 +1,6 @@
 class Fee::Subscription < Fee
   include Comparable
-  before_validation :set_dates, :set_more_info
+  before_validation :set_dates
 
   validates :start_date, :end_date, :sale_start, :sale_end, :age_ref_date, presence: true
   validates :name, uniqueness: { scope: :years, message: "duplicate subscription name and season" }
@@ -30,6 +30,7 @@ class Fee::Subscription < Fee
   def applies_to?(user)
     return false if new_player_required?
     return false unless user.player
+    return false unless user.player.active?
     return false if Item::Subscription.any_duplicates(user.player, end_date).exists?
     true
   end
@@ -40,6 +41,10 @@ class Fee::Subscription < Fee
 
   def new_player_required?
     name.match(/\bnew\b/i)
+  end
+
+  def url
+    "/help/membership"
   end
 
   def <=>(other)
@@ -61,7 +66,4 @@ class Fee::Subscription < Fee
     end
   end
 
-  def set_more_info
-    self.url = "http://www.icu.ie/help/membership"
-  end
 end

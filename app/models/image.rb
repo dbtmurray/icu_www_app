@@ -1,13 +1,15 @@
-class Image < ActiveRecord::Base
+require "cgi"
+
+class Image < ApplicationRecord
   include Journalable
   include Pageable
 
   journalize %w[data_file_name data_content_type data_file_size caption credit year], "/images/%d"
 
-  serialize :dimensions, Hash
+  serialize :dimensions, coder: YAML, type: Hash
 
   TYPES = "jpe?g|gif|png"
-  MAX_PIXELS = 2000
+  MAX_PIXELS = 10000
   MIN_PIXELS = 30
   THUMB_SIZE = 100
   STYLES = { :thumbnail => "#{THUMB_SIZE}x#{THUMB_SIZE}>" }
@@ -82,14 +84,15 @@ class Image < ActiveRecord::Base
     lnk = "a"
     lnk_atrs = %Q{ href="/images/#{id}"}
     if opt[:type] == "IML"
-      "<#{lnk}#{lnk_atrs}>#{opt[:text] || 'image'}</#{lnk}>"
+      "<#{lnk}#{lnk_atrs}>#{CGI.escapeHTML(opt[:text] || 'image')}</#{lnk}>"
     elsif opt[:type] == "IMG"
       width, height = resize(opt)
-      alt = (opt[:alt] || caption).gsub(/"/, '\"')
+      alt = CGI.escapeHTML(opt[:alt] || caption)
       margin = opt[:margin] || "yes"
       img_atrs = []
       wrp_atrs = []
       img_atrs.push %Q/src="#{data.url}"/
+      img_atrs.push 'class="img-responsive"'
       unless opt[:align] == "center" && opt[:responsive] == "true"
         img_atrs.push %Q/width="#{width}"/
         img_atrs.push %Q/height="#{height}"/
@@ -102,7 +105,6 @@ class Image < ActiveRecord::Base
         wrp_atrs.push 'class="float-right%s"' % (margin == "yes" ? " left-margin" : "")
       else
         wrp = "center"
-        img_atrs.push 'class="img-responsive"' if opt[:responsive] == "true"
       end
       img_atrs.push %Q/alt="#{alt}"/
       img_atrs = (img_atrs.any?? " " : "") + img_atrs.join(" ")

@@ -52,11 +52,12 @@ describe Download do
   end
 
   context "authorization" do
-    let(:level1)  { ["admin", user] }
-    let(:level2)  { ["editor"] }
-    let(:level3)  { User::ROLES.reject { |r| level1.include?(r) || level2.include?(r) }.append("guest") }
-    let!(:download) { create(:download, user: user) }
     let(:user)    { create(:user, roles: "editor") }
+    let(:level1)  { ["admin"] }
+    let(:level2)  { ["editor"] }
+    let(:level3)  { User::ROLES.reject { |r| level1.include?(r) || level2.include?(r) } }
+    let(:level4)  { ["guest"] }
+    let(:download) { create(:download, user: user) }
 
     def cell(label)
       "//th[.='#{label}']/following-sibling::td"
@@ -104,6 +105,14 @@ describe Download do
         visit downloads_path
         expect(page).to_not have_link(download.description)
         expect(page).to have_text(download.description)
+      end
+    end
+
+    it "level 4 cannot access anything" do
+      level4.each do |role|
+        login role
+        visit new_admin_download_path
+        expect(page).to have_css(failure, text: unauthorized)
       end
     end
   end

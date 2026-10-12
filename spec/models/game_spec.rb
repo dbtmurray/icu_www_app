@@ -3,6 +3,7 @@ require 'rails_helper'
 describe Game do
   context "#signature" do
     let!(:default)  { create(:game) }
+    let(:pgn)       { create(:pgn) }
 
     it "factory defaults" do
       expect(default.black).to eq "Orr, M"
@@ -21,31 +22,31 @@ describe Game do
     end
 
     it "moves are significant" do
-      game = build(:game, moves: default.moves.sub(/17\.Kd5/, "17.Kc5"))
+      game = build(:game, pgn: pgn, moves: default.moves.sub(/17\.Kd5/, "17.Kc5"))
       expect(game).to be_valid
       expect(game.signature).to_not eq default.signature
     end
 
     it "date is significant" do
-      game = build(:game, date: "1998.??.??")
+      game = build(:game, pgn: pgn, date: "1998.??.??")
       expect(game).to be_valid
       expect(game.signature).to_not eq default.signature
     end
 
     it "first names are ignored" do
-      game = build(:game, black: "Orr, Malcolm")
+      game = build(:game, pgn: pgn, black: "Orr, Malcolm")
       expect(game).to_not be_valid
       expect(game.signature).to eq default.signature
     end
 
     it "last name is significant" do
-      game = build(:game, black: "Tal, Mark")
+      game = build(:game, pgn: pgn, black: "Tal, Mark")
       expect(game).to be_valid
       expect(game.signature).to_not eq default.signature
     end
 
     it "result is significant" do
-      game = build(:game, result: "1-0")
+      game = build(:game, pgn: pgn, result: "1-0")
       expect(game).to be_valid
       expect(game.signature).to_not eq default.signature
     end
@@ -123,7 +124,7 @@ describe Game do
 [Result "0-1"]
 [BlackElo "2420"]
 [ECO "B34"]
-[ICUid "1"]
+[ICUid "#{game.id}"]
 
 1.e4 c5 2.Nf3 Nc6 3.d4 cxd4 4.Nxd4 g6 5.Nc3 Bg7 6.Be3 Nf6 7.f3 O-O 8.Bc4 Qb6
 9.Qd3 Ne5 10.Qe2 Qxb2 11.Kd2 Qb4 12.Bd3 Nc6 13.Rab1 Qa5 14.Nb3 Qxc3+ 15.Kxc3

@@ -6,8 +6,13 @@ en:
     csv: Generate CSV Report
     from_date: From
     to_date: To
+    event_not_found: Event not found
+    fee_not_found: Fee not found
     item: Item
     items: Items
+    items_for_event: Items for %{event}
+    items_for_fee: Items for %{fee}
+    lifetime_create: New Lifetime Member
     sales_ledger: Sales Ledger
     search_csv: Generate CSV
     subs_breakdown: Subscriptions Breakdown
@@ -19,6 +24,7 @@ en:
       entry:
         already_entered: "%{member} has already entered this event"
         already_in_cart: "A entry for %{member} in the same event is already in your cart"
+        no_subscription: "%{member} must be have an ICU subscription to enter this event."
       other:
         already_exists: A duplicate item has already been paid for
         already_in_cart: A duplicate item is already in your cart
@@ -65,3 +71,7 @@ en:
         subscription: Subscriptions
         total: Total
     change_section: "Change Section"
+    move:
+      different_fee: "The %{section} section's entry fees (%{fees}) differ from the %{paid} paid for this entry. Moving won't charge or refund the difference."
+      invalid_section: "That isn't one of this event's sections."
+      no_fee: "No entry fee covers the %{section} section, so it's not clear what this entry should cost there. Moving won't charge or refund anything."

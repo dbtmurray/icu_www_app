@@ -1,6 +1,14 @@
 class Admin::EventsController < ApplicationController
-  before_action :set_event, only: [:edit, :update, :destroy]
+  before_action :set_event, only: [:show, :edit, :update, :destroy]
   authorize_resource
+
+  def index
+    @events = Event.admin_search(params, admin_events_path, current_user)
+  end
+
+  def show
+    @entries = @event.journal_search if can?(:create, Event)
+  end
 
   def new
     @event = Event.new
@@ -42,8 +50,8 @@ class Admin::EventsController < ApplicationController
   end
 
   def event_params
-    params[:event].permit(:flyer, :name, :category, :location, :start_date, :end_date, :contact, :phone, :email,
-                          :url, :pairings_url, :live_games_url, :results_url, :report_url,
-                          :lat, :long, :prize_fund, :active, :note, :sections, :user_id)
+    params[:event].permit(:flyer, :name, :category, :is_fide_rated, :location, :start_date, :end_date, :contact, :phone, :email,
+                          :url, :pairings_url, :live_games_url, :live_games_url2, :streaming_url, :results_url, :report_url,
+                          :lat, :long, :prize_fund, :active, :note, :sections, :subscription_required, :user_id, time_controls: [])
   end
 end

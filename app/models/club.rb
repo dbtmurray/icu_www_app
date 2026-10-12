@@ -1,12 +1,15 @@
-class Club < ActiveRecord::Base
+class Club < ApplicationRecord
   include Geocodable
   include Journalable
   include Normalizable
   include Pageable
 
-  journalize %w[name web meet address district city county lat long contact email phone active], "/clubs/%d"
+  journalize %w[name web meet address district city county lat long contact email phone active description notes secretary_id], "/clubs/%d"
 
   has_many :players
+  has_many :club_meetings, dependent: :destroy
+  belongs_to :secretary, class_name: "Player", optional: true
+  accepts_nested_attributes_for :club_meetings, allow_destroy: true, reject_if: :all_blank
 
   default_scope { order(:name) }
   scope :active, -> { where(active: true) }
@@ -29,6 +32,7 @@ class Club < ActiveRecord::Base
   validates :email, email: true, allow_nil: true
   validates :phone, format: { with: /\d{3}/ }, allow_nil: true
   validates :active, inclusion: { in: [true, false] }
+  validate :secretary_exists
 
   def province
     Ireland.province(county)
@@ -40,7 +44,7 @@ class Club < ActiveRecord::Base
 
   def self.search(params, path)
     matches = all
-    matches = matches.where("name LIKE ?", "%#{params[:name]}%") if params[:name].present?
+    matches = matches.where("name LIKE ?", "%#{params[:name].squish}%") if params[:name].present?
     matches = matches.where("city LIKE ?", "%#{params[:city]}%") if params[:city].present?
     matches = matches.where(county: params[:county]) if Ireland.county?(params[:county])
     matches = matches.where("county IN (?)", Ireland.counties(params[:province])) if Ireland.province?(params[:province])
@@ -52,6 +56,9 @@ class Club < ActiveRecord::Base
     case params[:junior]
       when "junior_only" then matches = matches.where(junior_only: true)
       when "has_junior_section" then matches = matches.where(has_junior_section: true)
+    end
+    if ClubMeeting::DAYS_OF_WEEK.include?(params[:day_of_week])
+      matches = matches.where("EXISTS (SELECT 1 FROM club_meetings WHERE club_meetings.club_id = clubs.id AND club_meetings.day_of_week = ?)", params[:day_of_week])
     end
     paginate(matches, params, path)
   end
@@ -72,9 +79,16 @@ class Club < ActiveRecord::Base
 
   private
 
+  def secretary_exists
+    if secretary_id.present? && !Player.exists?(secretary_id)
+      errors.add(:secretary_id, "player does not exist")
+    end
+  end
+
   def has_contact_method
     if active && !contactable?
-      errors[:base] << "An active club must have at least one contact method (phone, email or web)"
+    #   errors[:base] << "An active club must have at least one contact method (phone, email or web)"
+      errors.add(:base, "An active club must have at least one contact method (phone, email or web)")
     end
   end
 

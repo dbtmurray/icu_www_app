@@ -12,17 +12,21 @@ class Admin::CartsController < ApplicationController
     @prev_next = Util::PrevNext.new(session, Cart, params[:id], admin: true)
   end
 
-  def show_charge
+  def show_intent
     @cart = Cart.find(params[:id])
-    @charge = Stripe::Charge.retrieve(@cart.payment_ref)
-    @json = JSON.pretty_generate(@charge.as_json)
+    if @cart.payment_ref.start_with?("pi_")
+      @intent = Stripe::PaymentIntent.retrieve(@cart.payment_ref)
+    elsif @cart.payment_ref.start_with?("ch_")
+      @intent = Stripe::Charge.retrieve(@cart.payment_ref)
+    end
+    @json = JSON.pretty_generate(@intent.as_json)
   rescue => e
     @error = e.message
   end
 
   def edit
     @cart = Cart.include_items_plus.find(params[:id])
-    redirect_to [:admin, @cart] unless @cart.revokable?
+    redirect_to [:admin, @cart] if @cart.all_items_refunded?
   end
 
   def update

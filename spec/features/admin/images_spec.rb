@@ -40,8 +40,8 @@ describe Image do
 
   context "authorization" do
     let(:level1) { ["admin", user] }
-    let(:level2) { ["editor"] }
-    let(:level3) { User::ROLES.reject { |r| r == "admin" || r == "editor" }.append("guest") }
+    let(:level2) { ["editor", "organiser"] }
+    let(:level3) { User::ROLES.reject { |r| r == "admin" || r == "editor" || r == "organiser" }.append("guest") }
     let(:user)   { create(:user, roles: "editor") }
     let!(:image) { create(:image, user: user) }
 
@@ -91,10 +91,14 @@ describe Image do
         visit edit_admin_image_path(image)
         expect(page).to have_css(failure, text: unauthorized)
         visit images_path
-        first(href(image)).click
-        expect(page).to have_xpath(cell(caption), text: image.caption)
-        expect(page).to_not have_link(edit)
-        expect(page).to_not have_link(delete)
+        if role == "guest"
+          expect(page).to have_css(failure, text: unauthorized)
+        else
+          first(href(image)).click
+          expect(page).to have_xpath(cell(caption), text: image.caption)
+          expect(page).to_not have_link(edit)
+          expect(page).to_not have_link(delete)
+        end
       end
     end
   end
@@ -175,7 +179,7 @@ describe Image do
     let(:april)     { attributes_for(:image_april) }
     let(:suzanne)   { attributes_for(:image_suzanne) }
     let(:gearoidin) { attributes_for(:image_gearoidin) }
-    let!(:image)    { create(:image_april, user: user) }
+    let!(:image)    { create(:image_april, :with_thumbnail, user: user) }
 
     before(:each) do
       login user

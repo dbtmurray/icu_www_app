@@ -38,18 +38,12 @@ describe "Revoke", js: true do
       visit shop_path
 
       click_link subscription_fee.description
-      click_button select_member
-      fill_in last_name, with: player.last_name + force_submit
-      fill_in first_name, with: player.first_name + force_submit
-      click_link player.id
+      pick_cart_member(player)
       click_button add_to_cart
 
       click_link continue
       click_link entry_fee.description
-      click_button select_member
-      fill_in last_name, with: player.last_name + force_submit
-      fill_in first_name, with: player.first_name + force_submit
-      click_link player.id
+      pick_cart_member(player)
       click_button add_to_cart
 
       click_link received
@@ -76,16 +70,15 @@ describe "Revoke", js: true do
       expect(cart.total).to eq subscription.cost + entry.cost
 
       visit admin_carts_path
-      click_link cart.id
+      click_link cart.id.to_formatted_s
       click_link revoke_link
 
       expect(page).to have_xpath(total, text: "%.2f" % cart.total)
 
       check "item_#{subscription.id}"
-      click_button revoke_button
-      confirm_dialog
+      accept_confirm { click_button revoke_button }
 
-      expect(page).to have_css(success, revoke_ok)
+      expect(page).to have_css(success, text: revoke_ok)
 
       cart.reload
       subscription.reload
@@ -108,10 +101,9 @@ describe "Revoke", js: true do
       expect(page).to have_xpath(total, text: "%.2f" % cart.total)
 
       check "item_#{entry.id}"
-      click_button revoke_button
-      confirm_dialog
+      accept_confirm { click_button revoke_button }
 
-      expect(page).to have_css(success, revoke_ok)
+      expect(page).to have_css(success, text: revoke_ok)
       expect(page).to_not have_link(revoke_button)
       expect(page).to_not have_link(refund_button)
 
@@ -146,16 +138,15 @@ describe "Revoke", js: true do
       expect(cart.total).to eq subscription.cost + entry.cost
 
       visit admin_carts_path
-      click_link cart.id
+      click_link cart.id.to_formatted_s
       click_link revoke_link
 
       expect(page).to have_xpath(total, text: "%.2f" % cart.total)
 
       check "all_items"
-      click_button revoke_button
-      confirm_dialog
+      accept_confirm { click_button revoke_button }
 
-      expect(page).to have_css(success, revoke_ok)
+      expect(page).to have_css(success, text: revoke_ok)
       expect(page).to_not have_link(revoke_button)
       expect(page).to_not have_link(refund_button)
 

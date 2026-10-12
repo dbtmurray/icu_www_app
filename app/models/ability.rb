@@ -3,6 +3,7 @@ class Ability
 
   def initialize(user)
     if user.guest?
+      can :index, Arbiter
       can :show, Fee::Entry do |entry|
         !entry.organizer_only
       end
@@ -10,8 +11,10 @@ class Ability
     end
 
     can :view, :special_membership # Used in IcuController to hide life members and current members
-    can :index, [Article, Download, Game, Image, Series, Tournament]
-    can :show, [Article, Game, Series, Tournament]
+    can :index, [Article, Arbiter, Download, Document, Game, Image, Series, Tournament]
+    can :show, [Article, Arbiter, Document, Game, Series, Tournament]
+    can [:edit, :update], Arbiter, player_id: user.player_id
+    can [:edit, :update], Club, secretary_id: user.player_id if user.player_id.present?
 
     if user.admin?
       can :manage, :all
@@ -27,17 +30,14 @@ class Ability
     end
 
     if user.editor?
-      can :create, [Article, Event, Image, News]
+      grant_full_event_permissions(user)
+
+      can :create, [Article, Image, News]
       can [:create, :show], Download
       can [:create, :index, :show], Pgn
-      can [:destroy, :update], [Article, Event, Image, News, Pgn, Download], user_id: user.id
+      can [:destroy, :update], [Article, Image, News, Pgn, Download], user_id: user.id
       can [:destroy, :update], Game, pgn: { user_id: user.id }
       can :manage, [Champion, Club, Series, Tournament]
-    end
-
-    if user.calendar?
-      can [:create, :update], Event
-      can :destroy, Event, user_id: user.id
     end
 
     if user.membership?
@@ -64,11 +64,20 @@ class Ability
 
     # Useful for tournament organizers
     if user.organiser?
-      can [:index, :show], [Fee, Item]
-      can :manage, Event, user_id: user.id
-      can :manage, Fee::Entry do |fee|
-        fee.event && fee.event.user_id == user.id
-      end
+      grant_full_event_permissions(user)
+
+      # Hash condition ensures that .accessible_by works as intended
+      can :manage, Fee::Entry, :event => { :user_id => user.id }
+      can :manage, Item::Entry, :fee_entry => {:event => { :user_id => user.id }}
+
+      # Full-access event users can manage fees (including cloning) and entries for the event, but not delete fees
+      full_access = { :event_users => { :user_id => user.id, :role => "full_access" } }
+      can [:read, :create, :update, :clone], Fee::Entry, :event => full_access
+      can [:read, :update], Item::Entry, :fee_entry => { :event => full_access }
+      can :manage, Arbiter
+
+      can :create, [Article, Image, News]
+      can [:destroy, :update], [Article, News], user_id: user.id
     end
 
     if user.reporter?
@@ -80,9 +89,16 @@ class Ability
       can :show, JournalEntry, journalable_type: "Translation"
     end
 
+    if user.auditor?
+      can :index, [Item, Cart]
+      can :show, Cart
+      can :show_intent, Cart
+    end
+
     if user.treasurer?
+      grant_full_event_permissions(user)
       can :create, CashPayment
-      can :index, [Item, PaymentError, Refund]
+      can :index, [Item, Item::Entry, PaymentError, Refund]
       can :manage, [Cart, Fee, Sponsor, UserInput]
     end
 
@@ -98,5 +114,31 @@ class Ability
     can :sales_ledger, Item
     can :download, Game
     can :index, Player
+  end
+
+  def grant_full_event_permissions(user)
+    # Creator has full manage rights
+    can :manage, Event, user_id: user.id
+
+    # Event users with full_access can manage (except destroy)
+    can [:read, :update, :edit], Event do |event|
+      event.event_users.exists?(user_id: user.id, role: "full_access")
+    end
+
+    # Event users with limited_access can only read/show (incl. downloading entries)
+    can [:read, :show], Event do |event|
+      event.event_users.exists?(user_id: user.id, role: "limited_access")
+    end
+
+    can [:read, :show], Event if user.treasurer?
+
+    # Can view the admin events index
+    can :index, Event
+
+    # Can manage event_users for events they created
+    can [:create, :destroy], EventUser do |event_user|
+      event = event_user.event
+      event.creator?(user) || user.admin?
+    end
   end
 end

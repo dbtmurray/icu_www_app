@@ -1,16 +1,24 @@
-class Event < ActiveRecord::Base
+class Event < ApplicationRecord
   include Geocodable
   include Journalable
   include Normalizable
   include Pageable
   include Remarkable
 
-  journalize %w[flyer_file_name flyer_content_type flyer_file_size name location lat long start_date end_date
-              active category contact email phone url pairings_url results_url report_url live_games_url prize_fund note sections], "/events/%d"
+  journalize %w[flyer_file_name flyer_content_type flyer_file_size name location lat long start_date end_date time_controls is_fide_rated
+              active category contact email phone url pairings_url results_url report_url live_games_url live_games_url2 prize_fund note
+              sections subscription_required streaming_url], "/events/%d"
 
   MIN_SIZE = 1.kilobyte
   MAX_SIZE = 3.megabytes
   CATEGORIES = %w[irish junior women foreign junint]
+  TIME_CONTROLS = %w[classical rapid blitz].freeze
+  # Events lasting up to this many days (counting the first and last) are short, so they show in the homepage event lists
+  MAX_SHORT_EVENT_DAYS = 13
+  EDIT_AFTER_STARTED = %w[name end_date location lat long
+                         time_controls category sections short_event is_fide_rated prize_fund flyer contact email phone
+                         url pairings_url live_games_url live_games_url2 streaming_url results_url report_url note].freeze
+  EDIT_AFTER_ENDED = %w[url pairings_url live_games_url live_games_url2 streaming_url results_url report_url note].freeze
   TYPES = {
     pdf:  "application/pdf",
     doc:  "application/msword",
@@ -20,18 +28,32 @@ class Event < ActiveRecord::Base
   EXTENSIONS = /\.(#{TYPES.values.join("|")})\z/i
   CONTENT_TYPES = TYPES.values.flatten
 
+
   scope :active, -> { where(active: true) }
+  scope :short, -> { where(short_event: true) }
+  scope :is_fide_rated, -> { where(is_fide_rated: true) }
   scope :with_geocodes, -> { where.not(lat: nil).where.not(long: nil) }
-  scope :upcoming, -> { active.where("start_date > ?", Date.today).order(:start_date) }
+  scope :upcoming, -> { where("start_date > ?", Date.today).order(:start_date) }
+
+  scope :classical, -> { where("JSON_CONTAINS(time_controls, ?)", '"classical"') }
+  scope :rapid, -> { where("JSON_CONTAINS(time_controls, ?)", '"rapid"') }
+  scope :blitz, -> { where("JSON_CONTAINS(time_controls, ?)", '"blitz"') }
 
   scope :junior, -> { where(category: "junior") }
   scope :junint, -> { where(category: "junint") }
+  scope :wint, -> { where(category: "wint") }
+  scope :women, -> { where(category: "women") }
   has_attached_file :flyer, keep_old_files: true
 
   belongs_to :user
+  has_many :event_users, dependent: :destroy
+  has_many :event_organisers, through: :event_users, source: :user
   has_many :fee_entries, class_name: 'Fee::Entry'
+  attribute :time_controls, :json, default: -> { ["classical"] }
 
+  before_validation :ensure_time_controls_is_array
   before_validation :normalize_attributes
+  before_validation :set_short_event
 
   validates_attachment :flyer, content_type: { file_name: EXTENSIONS, content_type: CONTENT_TYPES }, size: { in: MIN_SIZE..MAX_SIZE }
   validates :name, presence: true, length: { maximum: 75 }
@@ -47,42 +69,117 @@ class Event < ActiveRecord::Base
   validates :url, url: true, allow_blank: true
   validates :pairings_url, url: true, allow_blank: true
   validates :live_games_url, url: true, allow_blank: true
+  validates :live_games_url2, url: true, allow_blank: true
   validates :results_url, url: true, allow_blank: true
   validates :report_url, url: true, allow_blank: true
+  validates :streaming_url, url: true, allow_blank: true
   validates :start_date, date: { on_or_after: :today }, on: :create, unless: Proc.new { |e| e.source == "www1" }
-  validates :end_date, date: { on_or_after: :today }, unless: Proc.new { |e| e.source == "www1" }
+  validates :end_date, date: { on_or_after: :today }, on: :create, unless: Proc.new { |e| e.source == "www1" }
 
   validate :valid_dates
+  validate :restrict_edits_if_started, on: :update
+  validate :restrict_edits_if_ended, on: :update
+  validate :time_controls_must_be_valid
 
   scope :include_player, -> { includes(user: :player) }
   scope :ordered, -> { order(:start_date, :end_date, :name) }
+  scope :past, -> { where("end_date < ?", Date.today).order(end_date: :desc) }
+  scope :active, -> { where(active: true) }
 
   def self.search(params, path)
     matches = ordered.include_player
-    case params[:active]
-    when "active", nil
-      matches = matches.where(active: true)
-    when "inactive"
-      matches = matches.where(active: false)
+
+    # include inactive?
+    matches = matches.where(active: true) unless params[:include_inactive] == "on"
+    matches = matches.where(is_fide_rated: true) if params[:is_fide_rated] == "on"
+
+    # search
+    if params[:search].present?
+      matches = matches.where("name LIKE :term OR location LIKE :term", term: "%#{params[:search]}%")
     end
-    matches = matches.where("name LIKE ?", "%#{params[:name]}%") if params[:name].present?
-    matches = matches.where("location LIKE ?", "%#{params[:location]}%") if params[:location].present?
+
+    # from date
     default = Date.today
     params[:year] = default.year.to_s unless params[:year].to_s.match(/\A20\d\d\z/)
     params[:month] = "%02d" % default.month unless params[:month].to_s.match(/\A(0[1-9]|1[0-2])\z/)
-    if default.year.to_s == params[:year] && default.strftime("%m") == params[:month]
-      day = default.strftime("%d")
-    else
-      day = "01"
-    end
+    day = (default.year.to_s == params[:year] && default.strftime("%m") == params[:month]) ? default.strftime("%d") : "01"
     matches = matches.where("start_date >= ?", "#{params[:year]}-#{params[:month]}-#{day}")
-    matches = matches.where(category: params[:category]) if CATEGORIES.include?(params[:category])
+
+    # category
+    category_values = {
+      "all" => CATEGORIES,
+      "women" => ["women"],
+      "juniors" => ["junior", "junint"],
+      "international" => ["foreign", "junint"]
+    }
+    matches = matches.where(category: category_values[params[:category]] || CATEGORIES)
+
+    # time control
+    if TIME_CONTROLS.include?(params[:time_controls])
+      matches = matches.where(
+        "JSON_CONTAINS(time_controls, ?)",
+        params[:time_controls].to_json
+      )
+    end
+
     paginate(matches, params, path)
   end
 
+  def self.admin_search(params, path, user)
+    matches = includes(:user)
+
+    # organisers see only their own events & events they have been added to
+    unless user.admin?
+      matches = matches.includes(:event_users)
+      matches = matches.where("events.user_id = ? OR EXISTS (SELECT 1 FROM event_users WHERE event_users.event_id = events.id AND event_users.user_id = ?)", user.id, user.id)
+    end
+
+    # filter by specific user (admin-only)
+    if user.admin? && params[:user_id].present?
+      matches = matches.where(user_id: params[:user_id])
+    end
+
+    # event name
+    if params[:name].present?
+      matches = matches.where("name LIKE ?", "%#{params[:name]}%")
+    end
+
+    # return all upcoming events and paginated past events
+    {
+      upcoming: matches.upcoming,
+      past: paginate(matches.past, params, path)
+    }
+  end
+
+
+  # EventUser helpers
+  def creator
+    user
+  end
+
+  def creator?(user)
+    self.user_id == user.id
+  end
+
+  def has_full_access?(user)
+    return true if creator?(user)
+    event_users.exists?(user_id: user.id, role: "full_access")
+  end
+
+  def has_limited_access?(user)
+    event_users.exists?(user_id: user.id, role: "limited_access")
+  end
+
+  def has_any_access?(user)
+    return true if creator?(user)
+    event_users.exists?(user_id: user.id)
+  end
+
+
   # @return [Array<Item::Entry>] belonging to this event
   def items
-    Item::Entry.joins(:fee).joins(:player).where("fees.event_id=?", id).order("coalesce(players.latest_rating, players.legacy_rating) desc")
+    # should be safe since ID is not a user entered value and using the normal syntax throws errors
+    Item::Entry.joins(:fee).joins(:player).preload(:player, :cart).where("fees.event_id=?", id).order(Arel.sql("coalesce(players.latest_rating, players.legacy_rating) desc"))
   end
 
   # @return [Array<String>] A collection of section names for this event. Mostly "Minor", "Intermediate", "Major", "Masters"
@@ -101,7 +198,9 @@ class Event < ActiveRecord::Base
   def dates
     parts = []
     if start_date.year == end_date.year
-      parts.unshift start_date.year
+      unless start_date.year == Date.today.year
+        parts.unshift start_date.year
+      end
       if start_date.month == end_date.month
         parts.unshift I18n.t("month.s#{start_date.strftime('%m')}")
         if start_date.mday == end_date.mday
@@ -128,14 +227,43 @@ class Event < ActiveRecord::Base
     parts.join(" ")
   end
 
+  # @return [Array<String>] Example: ["30 Dec 2025", "–", "2 Jan 2026"]
+  # Purpose is that we can line-wrap after each span if required on smaller screens
+  def multiyear_dates_as_spans
+    start_str = [
+      start_date.mday,
+      I18n.t("month.s#{start_date.strftime('%m')}"),
+      start_date.year
+    ].join(" ")
+
+    end_str = [
+      end_date.mday,
+      I18n.t("month.s#{end_date.strftime('%m')}"),
+      end_date.year
+    ].join(" ")
+
+    [start_str, "–", end_str]
+  end
+
   def geocodes?
     active && lat.present? && long.present?
+  end
+
+  def map_marker_key
+    return 'other' if time_controls.blank?
+
+    time_controls.map(&:to_s).join('_')
   end
 
   private
 
   def normalize_attributes
     normalize_blanks(:contact, :phone, :email, :url, :note)
+  end
+
+  # For old records with NULL value for time_controls
+  def ensure_time_controls_is_array
+    self.time_controls ||= []
   end
 
   def valid_dates
@@ -146,5 +274,37 @@ class Event < ActiveRecord::Base
         errors.add(:end_date, "must end in the same or next year it starts")
       end
     end
+  end
+
+  def set_short_event
+    return if start_date.blank? || end_date.blank?
+    self.short_event = (end_date - start_date).to_i + 1 <= MAX_SHORT_EVENT_DAYS
+  end
+
+  def restrict_edits_if_started
+    return if start_date.blank?
+    return if start_date > Date.today
+
+    disallowed_changes = changed - EDIT_AFTER_STARTED
+    if disallowed_changes.any?
+      errors.add(:start_date, "Trying to change a field that can no longer by edited as event has started")
+    end
+  end
+
+  def restrict_edits_if_ended
+    return if end_date.blank?
+    return if end_date >= Date.today
+
+    disallowed_changes = changed - EDIT_AFTER_ENDED
+    if disallowed_changes.any?
+      errors.add(:end_date, "Trying to change a field that can no longer by edited as event has ended")
+    end
+  end
+
+  def time_controls_must_be_valid
+    return if time_controls.blank?
+
+    invalid_values = time_controls - TIME_CONTROLS
+    errors.add(:time_controls, "contains invalid values: #{invalid_values.join(', ')}") if invalid_values.any?
   end
 end

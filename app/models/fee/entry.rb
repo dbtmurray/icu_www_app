@@ -1,8 +1,6 @@
 class Fee::Entry < Fee
   before_validation :default_attributes
 
-  belongs_to :event
-
   validates :start_date, :end_date, :sale_start, :sale_end, presence: true
   validates :name, uniqueness: { scope: :start_date, message: "duplicate tournament name and start date" }
 
@@ -29,21 +27,14 @@ class Fee::Entry < Fee
     fee.becomes(Fee)
   end
 
+  # Entry fees can't be rolled over: they belong to one event, and new ones are only added from an event's page
   def rolloverable?
-    dups = Fee::Entry.where(name: name)
-    dups = dups.where(year: year + 1) if year
-    dups = dups.where(years: season.next.to_s) if years
-    dups.count == 0
-  end
-
-  def rollover
-    fee = self.dup
-    fee.advance_1_year
-    fee.becomes(Fee)
+    false
   end
 
   def applies_to?(user)
     return false unless user.player
+    return false unless user.player.active?
     return false if Item::Entry.any_duplicates(self, user.player).exists?
     true
   end

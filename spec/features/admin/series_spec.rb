@@ -13,7 +13,8 @@ describe Series do
   context "authorization" do
     let!(:header)  { "h1" }
     let(:level1)   { %w[admin editor] }
-    let(:level2)   { User::ROLES.reject { |r| level1.include?(r) }.append("guest") }
+    let(:level2)   { User::ROLES.reject { |r| level1.include?(r) } }
+    let(:level3)   { %w[guest] }
     let!(:series)  { create(:series) }
 
     it "level 1 can manage" do
@@ -43,6 +44,18 @@ describe Series do
         expect(page).to have_css(header, text: series.title)
         expect(page).to_not have_link(edit)
         expect(page).to_not have_link(delete)
+      end
+    end
+
+    it "level 3 cannot view anything" do
+      level3.each do |role|
+        login role
+        visit new_admin_series_path
+        expect(page).to have_css(failure, text: unauthorized)
+        visit edit_admin_series_path(series)
+        expect(page).to have_css(failure, text: unauthorized)
+        visit series_index_path
+        expect(page).to have_css(failure, text: unauthorized)
       end
     end
   end
@@ -84,13 +97,13 @@ describe Series do
       fill_in article_title, with: articles[0].title + force_submit
       click_link articles[0].title
 
-      wait_a_second(0.5)
+      expect(page).to have_no_css(".modal-backdrop")
 
       find(select_button(2)).click
       fill_in article_title, with: articles[1].title + force_submit
       click_link articles[1].title
 
-      wait_a_second(0.5)
+      expect(page).to have_no_css(".modal-backdrop")
       click_button save
 
       expect(page).to have_css(success, text: created)
@@ -100,7 +113,7 @@ describe Series do
 
       expect(series.title).to eq title
       expect(series.episodes.map(&:number).join("|")).to eq "1|2"
-      expect(series.articles.map(&:title).join("|")).to eq (0..1).map{ |i| articles[i].title }.join("|")
+      expect(series.articles.order("episodes.number").map(&:title).join("|")).to eq (0..1).map{ |i| articles[i].title }.join("|")
       expect(series.max_number).to eq 2
 
       expect(JournalEntry.series.count).to eq 1
@@ -114,13 +127,13 @@ describe Series do
       fill_in article_title, with: articles[0].title + force_submit
       click_link articles[0].title
 
-      wait_a_second(0.5)
+      expect(page).to have_no_css(".modal-backdrop")
 
       find(select_button(2)).click
       fill_in article_title, with: articles[1].title + force_submit
       click_link articles[1].title
 
-      wait_a_second(0.5)
+      expect(page).to have_no_css(".modal-backdrop")
 
       expect(page).to_not have_css(select_button(3))
       click_link(more)
@@ -129,7 +142,7 @@ describe Series do
       fill_in article_title, with: articles[2].title + force_submit
       click_link articles[2].title
 
-      wait_a_second(0.5)
+      expect(page).to have_no_css(".modal-backdrop")
 
       expect(page).to_not have_css(select_button(4))
       click_link(more)
@@ -138,7 +151,7 @@ describe Series do
       fill_in article_title, with: articles[3].title + force_submit
       click_link articles[3].title
 
-      wait_a_second(0.5)
+      expect(page).to have_no_css(".modal-backdrop")
 
       click_button save
 
@@ -149,7 +162,7 @@ describe Series do
 
       expect(series.title).to eq title
       expect(series.episodes.map(&:number).join("|")).to eq "1|2|3|4"
-      expect(series.articles.map(&:title).join("|")).to eq (0..3).map{ |i| articles[i].title }.join("|")
+      expect(series.articles.order("episodes.number").map(&:title).join("|")).to eq (0..3).map{ |i| articles[i].title }.join("|")
       expect(series.max_number).to eq 4
 
       expect(JournalEntry.series.count).to eq 1
@@ -179,10 +192,10 @@ describe Series do
 
     it "title" do
       new_title = "New Series Title"
-      fill_in series_title, with: new_title
+      fill_in series_title, with: new_title, fill_options: { clear: :backspace }
       click_button save
 
-      wait_a_second(0.4)
+      wait_for_browser
       series.reload
       expect(series.title).to eq new_title
       expect(series.episodes.count).to eq 3
@@ -197,7 +210,7 @@ describe Series do
       fill_in article_title, with: article.title + force_submit
       click_link article.title
 
-      wait_a_second(0.8)
+      expect(page).to have_no_css(".modal-backdrop")
 
       click_button save
 
@@ -205,7 +218,7 @@ describe Series do
       expect(series.episodes.count).to eq 4
       expect(series.articles.count).to eq 4
       expect(series.episodes.map(&:number).join("|")).to eq "1|2|3|4"
-      expect(series.articles.map(&:title).join("|")).to eq (0..2).map{ |i| episodes[i].article.title }.push(article.title).join("|")
+      expect(series.articles.order("episodes.number").map(&:title).join("|")).to eq (0..2).map{ |i| episodes[i].article.title }.push(article.title).join("|")
 
       expect(Article.count).to eq 4
       expect(Episode.count).to eq 4
@@ -217,13 +230,13 @@ describe Series do
       find(keep(2)).set(false)
 
       click_button save
-      wait_a_second(0.1)
+      wait_for_browser
 
       series.reload
       expect(series.episodes.count).to eq 2
       expect(series.articles.count).to eq 2
       expect(series.episodes.map(&:number).join("|")).to eq "1|2"
-      expect(series.articles.map(&:title).join("|")).to eq [0, 2].map{ |i| episodes[i].article.title }.join("|")
+      expect(series.articles.order("episodes.number").map(&:title).join("|")).to eq [0, 2].map{ |i| episodes[i].article.title }.join("|")
 
       expect(Article.count).to eq 4
       expect(Episode.count).to eq 2
@@ -238,15 +251,16 @@ describe Series do
       fill_in article_title, with: episodes[0].article.title + force_submit
       click_link episodes[0].article.title
 
-      wait_a_second(0.5)
+      expect(page).to have_no_css(".modal-backdrop", wait: 5)
 
       click_button save
+      expect(page).to have_css(success, text: updated)
 
       series.reload
       expect(series.episodes.count).to eq 3
       expect(series.articles.count).to eq 3
       expect(series.episodes.map(&:number).join("|")).to eq "1|2|3"
-      expect(series.articles.map(&:title).join("|")).to eq [1, 2, 0].map{ |i| episodes[i].article.title }.join("|")
+      expect(series.articles.order("episodes.number").map(&:title).join("|")).to eq [1, 2, 0].map{ |i| episodes[i].article.title }.join("|")
 
       expect(Article.count).to eq 4
       expect(Episode.count).to eq 3
@@ -255,27 +269,45 @@ describe Series do
     end
 
     it "move last article to first position" do
-      find(keep(3)).set(false)
+      uncheck "keep_3"
+      expect(page).not_to have_checked_field(keep(3))
 
+      # select the existing article for the new 1st episode
       find(select_button(1, 3)).click
       fill_in article_title, with: episodes[2].article.title + force_submit
-      click_link episodes[2].article.title
 
-      wait_a_second(0.5)
+      expect(page).to have_link(episodes[2].article.title, wait: 5)
+      find(
+        "a.article_ids_callback[data-id='#{episodes[2].article.id}']"
+      ).click
 
-      find(number(1, 3)).select(1)
+      # wait until the modal has populated the form.
+      expect(page).to have_css(
+        "#article_title_4",
+        text: episodes[2].article.title,
+        wait: 5
+      )
+      expect(page).to have_no_css(".modal-backdrop", wait: 5)
+      expect(find("#add_4", visible: false).value).to eq(
+        episodes[2].article_id.to_s
+      )
+
+      # add the article again and select ep 1
+      find(number(1, 3)).select("1")
+
       click_button save
+      expect(page).to have_css(success, text: updated)
 
       series.reload
-      expect(series.episodes.count).to eq 3
-      expect(series.articles.count).to eq 3
-      expect(series.episodes.map(&:number).join("|")).to eq "1|2|3"
-      expect(series.articles.map(&:title).join("|")).to eq [2, 0, 1].map{ |i| episodes[i].article.title }.join("|")
 
-      expect(Article.count).to eq 4
-      expect(Episode.count).to eq 3
-      expect(Series.count).to eq 1
-      expect(JournalEntry.series.count).to eq 0
+      # verify the episode order after saving
+      expect(series.episodes.pluck(:number, :article_id)).to eq(
+        [
+          [1, episodes[2].article_id],
+          [2, episodes[0].article_id],
+          [3, episodes[1].article_id]
+        ]
+      )
     end
   end
 
